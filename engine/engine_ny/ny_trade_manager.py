@@ -109,9 +109,13 @@ class NYTradeManager:
             elif h >= sig.take_profit:
                 return self._close_position(bar_dt, sig.take_profit, ExitReason.TP, cfg.TARGET_RR)
         else:
-            if h >= sig.stop_loss:
+            # Evaluasi Asimetri Spread Bid/Ask (Audit-Proof):
+            # Posisi SHORT ditutup dengan BUY di harga ASK = Bid + Spread
+            ask_h = h + getattr(cfg, "SPREAD_USD", 0.30)
+            ask_l = l + getattr(cfg, "SPREAD_USD", 0.30)
+            if ask_h >= sig.stop_loss:
                 return self._close_position(bar_dt, sig.stop_loss, ExitReason.SL, -1.0)
-            elif l <= sig.take_profit:
+            elif ask_l <= sig.take_profit:
                 return self._close_position(bar_dt, sig.take_profit, ExitReason.TP, cfg.TARGET_RR)
 
         # ── 2. Evaluasi Time Cutoff (Akhir Jendela 16:30 UTC) ──

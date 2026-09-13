@@ -57,7 +57,8 @@ def compute_ny_indicators(df: pd.DataFrame) -> pd.DataFrame:
     # 1. True Range & SMA20 TR
     tr = np.maximum(high - low, np.maximum((high - prev_close).abs(), (low - prev_close).abs()))
     df["tr"] = tr
-    df["tr_sma20"] = df["tr"].rolling(cfg.EXPANSION_SMA_PERIOD).mean()
+    df["tr_past"] = df["tr"].shift(1)
+    df["tr_sma20"] = df["tr"].rolling(cfg.EXPANSION_SMA_PERIOD).mean().shift(1)
     df["atr14"] = df["tr"].ewm(alpha=1.0 / 14, adjust=False).mean()
 
     # 2. Extract Opening Range M15 (13:30 - 13:45 UTC) per date
@@ -106,17 +107,24 @@ class NYStrategy:
         if pd.isna(or_h) or pd.isna(or_l) or pd.isna(or_rng) or or_rng <= 0:
             return None
 
-        # Filter Ekspansi
+        # Filter Ekspansi (Kausal 100%: Menggunakan True Range bar sebelumnya yang sudah tutup)
         if cfg.USE_EXPANSION_FILTER:
-            tr = row["tr"]
+            tr = row["tr_past"]
             tr_sma = row["tr_sma20"]
             if pd.isna(tr_sma) or tr_sma <= 0:
                 return None
             if tr <= cfg.EXPANSION_MULT * tr_sma:
                 return None
 
+        # Filter HTF Trend Confluence
+        htf_col = getattr(cfg, "HTF_COL", "h1_ema50")
+        htf_ema = row.get(htf_col, row.get("h1_ema50", row.get("htf_ema", np.nan)))
+        htf_filter_active = getattr(cfg, "USE_HTF_TREND_FILTER", False) and pd.notna(htf_ema)
+
         # Sinyal Long
         if row["high"] > or_h:
+            if htf_filter_active and row["close"] < htf_ema:
+                return None
             entry = or_h
             risk = or_rng
             sl = entry - risk
@@ -135,6 +143,8 @@ class NYStrategy:
 
         # Sinyal Short
         elif row["low"] < or_l:
+            if htf_filter_active and row["close"] > htf_ema:
+                return None
             entry = or_l
             risk = or_rng
             sl = entry + risk

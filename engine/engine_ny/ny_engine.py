@@ -82,8 +82,9 @@ class NYStats:
 class NYBacktester:
     """Mesin simulasi event-driven New York ORB."""
 
-    def __init__(self, df: pd.DataFrame, initial_capital: float = cfg.INITIAL_CAPITAL):
+    def __init__(self, df: pd.DataFrame, initial_capital: float = cfg.INITIAL_CAPITAL, df_m1: Optional[pd.DataFrame] = None):
         self.df_raw = df.copy()
+        self.df_m1 = df_m1.copy() if df_m1 is not None else None
         self.initial_capital = initial_capital
         self.strategy = NYStrategy()
         self.trade_manager = NYTradeManager(current_capital=initial_capital)
@@ -97,7 +98,147 @@ class NYBacktester:
         return self.trade_manager.closed_trades
 
     def run(self) -> NYStats:
-        """Eksekusi simulasi New York ORB pada dataset."""
+        """Eksekusi simulasi New York ORB (M1 Bar Magnifier jika df_m1 tersedia, else M5)."""
+        if self.df_m1 is not None:
+            return self._run_m1()
+        return self._run_m5()
+
+    def _run_m1(self) -> NYStats:
+        """Eksekusi presisi sub-bar M1 (Bar Magnifier) dengan setup sinyal M5."""
+        if "or_high" not in self.df_raw.columns or "tr_sma20" not in self.df_raw.columns:
+            df_m5 = compute_ny_indicators(self.df_raw)
+        else:
+            df_m5 = self.df_raw
+
+        df_m5 = df_m5.copy()
+        df_m5["expansion_ok"] = True
+        if cfg.USE_EXPANSION_FILTER:
+            df_m5["expansion_ok"] = (df_m5["tr_past"] > cfg.EXPANSION_MULT * df_m5["tr_sma20"]) & (df_m5["tr_sma20"] > 0)
+
+        m1 = self.df_m1.copy()
+        if "date" not in m1.columns:
+            m1["date"] = m1["datetime"].dt.date
+        if "hour" not in m1.columns:
+            m1["hour"] = m1["datetime"].dt.hour
+        if "minute" not in m1.columns:
+            m1["minute"] = m1["datetime"].dt.minute
+
+        cols_to_map = ["datetime", "expansion_ok"]
+        htf_col = getattr(cfg, "HTF_COL", "h1_ema50")
+        if htf_col in df_m5.columns:
+            cols_to_map.append(htf_col)
+
+        m1 = pd.merge_asof(
+            m1.sort_values("datetime"),
+            df_m5[cols_to_map].sort_values("datetime"),
+            on="datetime",
+            direction="backward"
+        )
+
+        self.equity_dates.append(m1["datetime"].iloc[0])
+
+        for date, day_m1 in m1.groupby("date"):
+            trade_count_today = 0
+            or_bars = day_m1[(day_m1["hour"] == 13) & (day_m1["minute"] >= 30) & (day_m1["minute"] < 45)]
+            if len(or_bars) < cfg.MIN_ORB_BARS:
+                continue
+
+            or_high = or_bars["high"].max()
+            or_low = or_bars["low"].min()
+            or_range = or_high - or_low
+            if or_range <= 0:
+                continue
+
+            window = day_m1[((day_m1["hour"] == 13) & (day_m1["minute"] >= 45)) |
+                            ((day_m1["hour"] > 13) & (day_m1["hour"] < 16)) |
+                            ((day_m1["hour"] == 16) & (day_m1["minute"] < 30))].copy()
+            if window.empty:
+                continue
+
+            n_rows = len(window)
+            for i, (_, row) in enumerate(window.iterrows()):
+                is_last_bar = (i == n_rows - 1)
+
+                if self.trade_manager.has_open_position:
+                    closed = self.trade_manager.update_bar(row, is_last_window_bar=is_last_bar)
+                    if closed:
+                        self.equity_curve.append(self.trade_manager.current_capital)
+                        self.equity_dates.append(row["datetime"])
+
+                if not self.trade_manager.has_open_position:
+                    if not getattr(cfg, "ALLOW_REENTRY", False) and trade_count_today >= getattr(cfg, "MAX_TRADES_PER_DAY", 1):
+                        continue
+
+                    if not row.get("expansion_ok", False):
+                        continue
+
+                    htf_ema = row.get(htf_col, np.nan)
+                    htf_filter_active = getattr(cfg, "USE_HTF_TREND_FILTER", False) and pd.notna(htf_ema)
+
+                    # Long
+                    if row["high"] > or_high:
+                        if htf_filter_active and row["close"] < htf_ema:
+                            continue
+                        entry = or_high
+                        risk = or_range
+                        sl = entry - risk
+                        tp = entry + risk * cfg.TARGET_RR
+                        sig = NYSignal(
+                            datetime=row["datetime"],
+                            direction=Direction.BUY,
+                            entry_price=entry,
+                            stop_loss=sl,
+                            take_profit=tp,
+                            initial_risk=risk,
+                            or_high=or_high,
+                            or_low=or_low,
+                            or_range=or_range
+                        )
+                        self.trade_manager.open_position(sig, capital=self.trade_manager.current_capital)
+                        trade_count_today += 1
+                        closed = self.trade_manager.update_bar(row, is_last_window_bar=is_last_bar)
+                        if closed:
+                            self.equity_curve.append(self.trade_manager.current_capital)
+                            self.equity_dates.append(row["datetime"])
+
+                    # Short
+                    elif row["low"] < or_low:
+                        if htf_filter_active and row["close"] > htf_ema:
+                            continue
+                        entry = or_low
+                        risk = or_range
+                        sl = entry + risk
+                        tp = entry - risk * cfg.TARGET_RR
+                        sig = NYSignal(
+                            datetime=row["datetime"],
+                            direction=Direction.SELL,
+                            entry_price=entry,
+                            stop_loss=sl,
+                            take_profit=tp,
+                            initial_risk=risk,
+                            or_high=or_high,
+                            or_low=or_low,
+                            or_range=or_range
+                        )
+                        self.trade_manager.open_position(sig, capital=self.trade_manager.current_capital)
+                        trade_count_today += 1
+                        closed = self.trade_manager.update_bar(row, is_last_window_bar=is_last_bar)
+                        if closed:
+                            self.equity_curve.append(self.trade_manager.current_capital)
+                            self.equity_dates.append(row["datetime"])
+
+            if self.trade_manager.has_open_position:
+                last_row = window.iloc[-1]
+                closed = self.trade_manager.update_bar(last_row, is_last_window_bar=True)
+                if closed:
+                    self.equity_curve.append(self.trade_manager.current_capital)
+                    self.equity_dates.append(last_row["datetime"])
+
+        self._compute_metrics(self.df_raw)
+        return self.stats
+
+    def _run_m5(self) -> NYStats:
+        """Eksekusi simulasi New York ORB pada dataset M5."""
         # 1. Siapkan indikator TR & ORB
         if "or_high" not in self.df_raw.columns or "tr_sma20" not in self.df_raw.columns:
             df = compute_ny_indicators(self.df_raw)
@@ -153,7 +294,7 @@ class NYBacktester:
                     # Filter ekspansi TR
                     expansion_ok = True
                     if cfg.USE_EXPANSION_FILTER:
-                        tr = row["tr"]
+                        tr = row.get("tr_past", row["tr"])
                         tr_sma = row["tr_sma20"]
                         if pd.isna(tr_sma) or tr_sma == 0:
                             expansion_ok = False
@@ -163,8 +304,15 @@ class NYBacktester:
                     if not expansion_ok:
                         continue
 
+                    # Filter HTF Trend Confluence
+                    htf_col = getattr(cfg, "HTF_COL", "h1_ema50")
+                    htf_ema = row.get(htf_col, row.get("h1_ema50", row.get("htf_ema", np.nan)))
+                    htf_filter_active = getattr(cfg, "USE_HTF_TREND_FILTER", False) and pd.notna(htf_ema)
+
                     # Sinyal Long
                     if row["high"] > or_high:
+                        if htf_filter_active and row["close"] < htf_ema:
+                            continue
                         entry = or_high
                         risk = or_range
                         sl = entry - risk
@@ -182,9 +330,16 @@ class NYBacktester:
                         )
                         self.trade_manager.open_position(sig, capital=self.trade_manager.current_capital)
                         trade_count_today += 1
+                        # Evaluasi pesimistis langsung di bar entri
+                        closed = self.trade_manager.update_bar(row, is_last_window_bar=is_last_bar)
+                        if closed:
+                            self.equity_curve.append(self.trade_manager.current_capital)
+                            self.equity_dates.append(row["datetime"])
 
                     # Sinyal Short
                     elif row["low"] < or_low:
+                        if htf_filter_active and row["close"] > htf_ema:
+                            continue
                         entry = or_low
                         risk = or_range
                         sl = entry + risk
@@ -202,6 +357,11 @@ class NYBacktester:
                         )
                         self.trade_manager.open_position(sig, capital=self.trade_manager.current_capital)
                         trade_count_today += 1
+                        # Evaluasi pesimistis langsung di bar entri
+                        closed = self.trade_manager.update_bar(row, is_last_window_bar=is_last_bar)
+                        if closed:
+                            self.equity_curve.append(self.trade_manager.current_capital)
+                            self.equity_dates.append(row["datetime"])
 
             # Jika di akhir window masih ada trade aktif, tutup di penutupan bar terakhir (TIME)
             if self.trade_manager.has_open_position:

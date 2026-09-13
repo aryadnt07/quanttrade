@@ -81,4 +81,4 @@ MAX_TRADES_PER_DAY     = 1          # Maksimal trade per hari untuk mencegah ove
 # DATA PATHS
 # ─────────────────────────────────────────────
 DATA_DIR          = "data"
-SAMPLE_DATA_FILE  = "xauusd-m5-bid-2024-09-08-2026-09-08.csv"
+SAMPLE_DATA_FILE  = "xauusd-m5-bid-2021-09-08-2026-09-08.csv"

@@ -23,9 +23,9 @@ TIMEFRAME              = "M5"
 # 2. OPENING RANGE & EXPANSION FILTERS
 # ─────────────────────────────────────────────
 MIN_ORB_BARS           = 2           # Minimal 2 dari 3 bar M5 (13:30, 13:35, 13:40)
-EXPANSION_MULT         = 1.8         # Pengali True Range terhadap SMA20 TR
+EXPANSION_MULT         = 1.5         # Pengali True Range candle sebelumnya (shift 1) terhadap SMA20 TR
 EXPANSION_SMA_PERIOD   = 20          # Periode SMA untuk True Range
-USE_EXPANSION_FILTER   = True        # True = Wajib TR > 1.8 x SMA20 TR
+USE_EXPANSION_FILTER   = True        # True = Wajib Prior TR > 1.5 x SMA20 TR (100% Causal)
 
 # ─────────────────────────────────────────────
 # 3. RISK MANAGEMENT & EXIT PROTOCOL
@@ -40,10 +40,25 @@ ALLOW_REENTRY          = False       # False = 1 trade realistis per hari, True 
 # ─────────────────────────────────────────────
 INITIAL_CAPITAL        = 10_000.0    # Modal awal (USD)
 FIXED_RISK_USD         = 80.0        # Resiko dolar baseline ($80)
-RISK_PER_TRADE_PCT     = 0.01        # 1.0% risiko per trade jika compounding aktif
+RISK_PER_TRADE_PCT     = 0.02        # 2.0% risiko per trade jika compounding aktif
 MIN_LOT                = 0.01        # Lot minimum broker
 MAX_LOT                = 10.0        # Lot maksimum
 LOT_STEP               = 0.01        # Kelipatan lot
 POINT_VALUE            = 100.0       # $100 per lot per $1 gerakan XAU/USD
-SPREAD_USD             = 0.0         # Spread sesuai model R murni (atau 0.30 jika dihitung biaya)
+SPREAD_USD             = 0.30        # Estimasi spread realistis broker ($0.30/oz XAU/USD)
 COMMISSION_USD         = 0.0
+
+# ─────────────────────────────────────────────
+# 5. HIGHER-TIMEFRAME (HTF) TREND FILTER
+# ─────────────────────────────────────────────
+USE_HTF_TREND_FILTER   = False       # False = Seperti semula (M5 murni tanpa filter HTF)
+HTF_TIMEFRAME          = "1h"        # Timeframe HTF
+HTF_EMA_PERIOD         = 50          # Periode EMA pada timeframe HTF
+HTF_FILTER_MODE        = "TREND_ALIGNED" # Long jika Close > HTF EMA, Short jika Close < HTF EMA
+
+# ─────────────────────────────────────────────
+# 6. DATA PATHS
+# ─────────────────────────────────────────────
+DATA_DIR               = "data"
+SAMPLE_DATA_FILE       = "xauusd-m5-bid-2021-09-08-2026-09-08.csv"
+

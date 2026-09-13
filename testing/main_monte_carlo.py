@@ -49,6 +49,12 @@ def parse_args():
         help="Metode simulasi: 'reshuffle' (trade permutation) atau 'bootstrap' (sampling with replacement)",
     )
     parser.add_argument(
+        "--data",
+        type=str,
+        default=os.path.join(ROOT_DIR, "data", "xauusd-m5-bid-2021-09-08-2026-09-08.csv"),
+        help="Path dataset M5",
+    )
+    parser.add_argument(
         "--save-chart",
         type=str,
         default=os.path.join(ROOT_DIR, "output", "monte_carlo_dashboard.png"),
@@ -62,12 +68,13 @@ def main():
     print("=" * 70)
     print("   QUANTITATIVE MASTER PORTFOLIO — MONTE CARLO STRESS TEST")
     print("=" * 70)
+    print(f"  Dataset        : {args.data}")
     print(f"  Iterasi        : {args.iterations:,}")
     print(f"  Metode         : {args.mode.upper()}")
     print(f"  Chart Output   : {args.save_chart}")
     print("=" * 70 + "\n")
 
-    res = run_monte_carlo(iterations=args.iterations, mode=args.mode)
+    res = run_monte_carlo(n_iterations=args.iterations, mode=args.mode, data_path=args.data)
     print_monte_carlo_report(res)
 
     if args.save_chart:

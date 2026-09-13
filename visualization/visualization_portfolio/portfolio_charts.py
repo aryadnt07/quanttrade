@@ -42,6 +42,7 @@ plt.rcParams.update({
 
 # Palet warna konsisten institusional
 COLOR_ASIAN    = "#38bdf8"         # Cyan / Sky Blue untuk Asian MR
+COLOR_LONDON   = "#a855f7"         # Ungu / Electric Purple untuk London Pit ORB
 COLOR_NY       = "#fbbf24"         # Emas / Amber untuk New York ORB
 COLOR_TOTAL    = "#22c55e"         # Hijau Zamrud untuk Total Portofolio
 COLOR_LOSS     = "#ef4444"         # Merah untuk kerugian
@@ -65,20 +66,27 @@ def plot_portfolio_dashboard(
     equity_dates: List[pd.Timestamp],
     equity_curve: List[float],
     asian_equity: List[float],
+    london_equity: Optional[List[float]] = None,
     ny_equity: Optional[List[float]] = None,
     save_path: Optional[str] = None,
 ) -> None:
     """Render dashboard visual 4-panel untuk portofolio kuantitatif."""
     fig, axes = plt.subplots(
         4, 1,
-        figsize=(18, 15),
-        height_ratios=[2.2, 1.3, 1.0, 1.8],
-        gridspec_kw={"hspace": 0.30},
+        figsize=(25, 17),
+        height_ratios=[2.0, 1.6, 1.0, 1.8],
+        gridspec_kw={"hspace": 0.32},
     )
 
+    active_modules = []
+    if getattr(pcfg, "ENABLE_ASIAN_MR", True): active_modules.append("Asian MR")
+    if getattr(pcfg, "ENABLE_LONDON_ORB", False): active_modules.append("London ORB")
+    if getattr(pcfg, "ENABLE_STRATEGY_2", False): active_modules.append("NY ORB")
+    strat_title = " + ".join(active_modules)
+
     fig.suptitle(
-        "Quantitative Master Portfolio Dashboard — XAU/USD (Asian MR + NY ORB)\n"
-        "Multi-Session Systematic Strategy | Capital: $10,000 | Dynamic Compounding & De-Risking".replace("$", r"\$"),
+        f"Quantitative Master Portfolio Dashboard — XAU/USD ({strat_title})\n"
+        "Multi-Regime Systematic Strategy | Capital: $10,000 | Dynamic Compounding & De-Risking".replace("$", r"\$"),
         fontsize=15,
         fontweight="bold",
         color="#38bdf8",
@@ -87,7 +95,7 @@ def plot_portfolio_dashboard(
 
     # ── Panel 1: Master Price & Multi-Strategy Executions ──
     ax0 = axes[0]
-    ax0.set_title("Master Price Action & Multi-Session Executions (Asian MR + New York ORB)",
+    ax0.set_title(f"Master Price Action & Multi-Session Executions ({strat_title})",
                   fontsize=11, fontweight="bold", color="#93c5fd", loc="left")
 
     step = max(1, len(df_raw) // 1600)
@@ -95,6 +103,7 @@ def plot_portfolio_dashboard(
     ax0.plot(sampled_df["datetime"], sampled_df["close"], color="#60a5fa", linewidth=0.85, alpha=0.45, label="XAU/USD M5 Close")
 
     asian_plotted = False
+    london_plotted = False
     ny_plotted = False
 
     for t in trades:
@@ -103,6 +112,10 @@ def plot_portfolio_dashboard(
             lbl = "Asian MR Entry" if not asian_plotted else None
             ax0.scatter(t.entry_datetime, t.entry_price, color=COLOR_ASIAN, marker=m, s=36, zorder=5, label=lbl)
             asian_plotted = True
+        elif t.strategy == "LONDON_ORB":
+            lbl = "London ORB Entry" if not london_plotted else None
+            ax0.scatter(t.entry_datetime, t.entry_price, color=COLOR_LONDON, marker=m, s=36, zorder=5, label=lbl)
+            london_plotted = True
         elif t.strategy == "NY_ORB":
             lbl = "NY ORB Entry" if not ny_plotted else None
             ax0.scatter(t.entry_datetime, t.entry_price, color=COLOR_NY, marker=m, s=36, zorder=5, label=lbl)
@@ -113,73 +126,94 @@ def plot_portfolio_dashboard(
     ax0.grid(True, linestyle="--", alpha=0.2)
     ax0.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
 
-    # ── Panel 2: Monthly PnL Attribution (Asian MR vs NY ORB Side-by-Side) ──
+    # ── Panel 2: Monthly PnL Attribution (Side-by-Side) ──
     ax1 = axes[1]
-    ax1.set_title("Monthly PnL Strategy Attribution (Asian Mean Reversion vs NY ORB Breakout)",
+    ax1.set_title(f"Monthly PnL Strategy Attribution ({strat_title})",
                   fontsize=11, fontweight="bold", color="#93c5fd", loc="left")
 
     if not stats.monthly_pnl_df.empty:
         m_df = stats.monthly_pnl_df.copy()
         months = list(m_df.index)
         x = np.arange(len(months))
-        width = 0.36
 
-        vals_asia = m_df["ASIAN_MR"].values
-        vals_ny = m_df["NY_ORB"].values
-        vals_tot = m_df["TOTAL"].values
+        has_london = "LONDON_ORB" in m_df.columns and getattr(pcfg, "ENABLE_LONDON_ORB", False)
+        width = 0.30 if has_london else 0.38
 
-        # Bar Asian MR (kiri) & NY ORB (kanan)
-        bar_a = ax1.bar(x - width / 2, vals_asia, width=width, color=COLOR_ASIAN, alpha=0.85,
-                        edgecolor="#0b0e14", label=f"Asian MR (+{vals_asia.sum():,.0f} USD)")
-        bar_ny = ax1.bar(x + width / 2, vals_ny, width=width, color=COLOR_NY, alpha=0.85,
-                         edgecolor="#0b0e14", label=f"NY ORB (+{vals_ny.sum():,.0f} USD)")
+        vals_asia = m_df["ASIAN_MR"].values if "ASIAN_MR" in m_df.columns else np.zeros(len(months))
+        vals_lon = m_df["LONDON_ORB"].values if has_london else np.zeros(len(months))
+        vals_ny = m_df["NY_ORB"].values if "NY_ORB" in m_df.columns else np.zeros(len(months))
+        vals_tot = m_df["TOTAL"].values if "TOTAL" in m_df.columns else vals_asia + vals_lon + vals_ny
 
-        ax1.axhline(0, color="#6b7280", linewidth=0.8, linestyle="--")
-        ax1.set_xticks(x)
-        ax1.set_xticklabels(months, rotation=45, ha="right", fontsize=8)
-
-        # Hitung headroom & offset
-        all_vals = list(vals_asia) + list(vals_ny)
+        if has_london:
+            ax1.bar(x - width, vals_asia, width=width, color=COLOR_ASIAN, alpha=0.90,
+                    edgecolor="#0b0e14", linewidth=0.6, label=f"Asian MR (+{vals_asia.sum():,.0f} USD)")
+            ax1.bar(x, vals_lon, width=width, color=COLOR_LONDON, alpha=0.90,
+                    edgecolor="#0b0e14", linewidth=0.6, label=f"London ORB (+{vals_lon.sum():,.0f} USD)")
+            ax1.bar(x + width, vals_ny, width=width, color=COLOR_NY, alpha=0.90,
+                    edgecolor="#0b0e14", linewidth=0.6, label=f"NY ORB (+{vals_ny.sum():,.0f} USD)")
+            all_vals = list(vals_asia) + list(vals_lon) + list(vals_ny)
+        else:
+            ax1.bar(x - width / 2, vals_asia, width=width, color=COLOR_ASIAN, alpha=0.90,
+                    edgecolor="#0b0e14", linewidth=0.6, label=f"Asian MR (+{vals_asia.sum():,.0f} USD)")
+            ax1.bar(x + width / 2, vals_ny, width=width, color=COLOR_NY, alpha=0.90,
+                    edgecolor="#0b0e14", linewidth=0.6, label=f"NY ORB (+{vals_ny.sum():,.0f} USD)")
+            all_vals = list(vals_asia) + list(vals_ny)
         max_v = max(all_vals) if all_vals else 100
         min_v = min(all_vals) if all_vals else -100
         y_span = max_v - min(0, min_v)
-        y_pad = y_span * 0.025
+        y_pad = y_span * 0.028
 
-        # Nominal label di atas/bawah masing-masing bar dengan rotasi 90 derajat agar tidak bertumpukan
+        # Nominal label di atas/bawah masing-masing bar dengan rotasi 90 derajat agar persis seperti dashboard klasik
         for idx in range(len(months)):
             va = vals_asia[idx]
             vny = vals_ny[idx]
 
-            # Label Asian MR (Cyan, vertikal di atas bar)
-            pos_y_a = va + y_pad if va >= 0 else va - y_pad * 1.2
-            ax1.text(
-                x[idx] - width / 2, pos_y_a, _fmt_bar_val(va),
-                ha="center", va="bottom" if va >= 0 else "top", fontsize=7.2,
-                fontweight="bold", color=COLOR_ASIAN, rotation=90
-            )
+            # Label Asian MR (Cyan, vertikal)
+            if abs(va) > 0:
+                pos_y_a = va + y_pad if va >= 0 else va - y_pad * 1.25
+                ax1.text(
+                    x[idx] - width if has_london else x[idx] - width / 2, pos_y_a, _fmt_bar_val(va),
+                    ha="center", va="bottom" if va >= 0 else "top", fontsize=7.2 if has_london else 7.8,
+                    fontweight="bold", color=COLOR_ASIAN, rotation=90
+                )
 
-            # Label NY ORB (Gold, vertikal di atas bar)
-            pos_y_ny = vny + y_pad if vny >= 0 else vny - y_pad * 1.2
-            ax1.text(
-                x[idx] + width / 2, pos_y_ny, _fmt_bar_val(vny),
-                ha="center", va="bottom" if vny >= 0 else "top", fontsize=7.2,
-                fontweight="bold", color=COLOR_NY, rotation=90
-            )
+            # Label London ORB (Ungu / Electric Purple, vertikal)
+            if has_london:
+                vlon = vals_lon[idx]
+                if abs(vlon) > 0:
+                    pos_y_lon = vlon + y_pad if vlon >= 0 else vlon - y_pad * 1.25
+                    ax1.text(
+                        x[idx], pos_y_lon, _fmt_bar_val(vlon),
+                        ha="center", va="bottom" if vlon >= 0 else "top", fontsize=7.2,
+                        fontweight="bold", color=COLOR_LONDON, rotation=90
+                    )
 
-        ax1.set_ylim(-9500, max_v * 1.35)
+            # Label NY ORB (Gold / Amber, vertikal)
+            if abs(vny) > 0:
+                pos_y_ny = vny + y_pad if vny >= 0 else vny - y_pad * 1.25
+                ax1.text(
+                    x[idx] + width if has_london else x[idx] + width / 2, pos_y_ny, _fmt_bar_val(vny),
+                    ha="center", va="bottom" if vny >= 0 else "top", fontsize=7.2 if has_london else 7.8,
+                    fontweight="bold", color=COLOR_NY, rotation=90
+                )
+
+        banner_text = (
+            f"Profitable Months: {sum(1 for v in vals_tot if v >= 0)}/{len(vals_tot)} "
+            f"({sum(1 for v in vals_tot if v >= 0)/len(vals_tot)*100.0:.1f}%) | "
+            f"Asian MR: +${vals_asia.sum():,.0f} USD | "
+            + (f"London ORB: +${vals_lon.sum():,.0f} USD | " if has_london else "")
+            + f"NY ORB: +${vals_ny.sum():,.0f} USD | Total: +${vals_tot.sum():,.0f} USD"
+        ).replace("$", r"\$")
+
+        ax1.axhline(0, color="#6b7280", linewidth=0.8, linestyle="--")
+        ax1.set_xticks(x)
+        ax1.set_xticklabels(months, rotation=45, ha="right", fontsize=8)
+        ax1.set_ylim(min(-9500, min_v * 1.35), max_v * 1.42)
         ax1.tick_params(axis="x", pad=6)
 
-        # Label banner atribusi
-        pos_m = sum(1 for v in vals_tot if v >= 0)
-        tot_m = len(vals_tot)
-        pct_pos = (pos_m / tot_m * 100.0) if tot_m > 0 else 0.0
-        banner_text = (
-            f"Profitable Months: {pos_m}/{tot_m} ({pct_pos:.1f}%) | "
-            f"Asian MR: +{vals_asia.sum():,.2f} USD | NY ORB: +{vals_ny.sum():,.2f} USD | Total: +{vals_tot.sum():,.2f} USD"
-        )
         ax1.text(
             0.02, 0.90, banner_text,
-            transform=ax1.transAxes, color="#fbbf24", fontsize=8.5, fontweight="bold",
+            transform=ax1.transAxes, color="#fbbf24", fontsize=8.2, fontweight="bold",
             bbox=dict(boxstyle="round,pad=0.3", facecolor="#1f2937", edgecolor="#374151")
         )
 
@@ -218,6 +252,9 @@ def plot_portfolio_dashboard(
         if len(asian_equity) == len(equity_dates):
             ax3.plot(equity_dates, asian_equity, color=COLOR_ASIAN, linewidth=1.2, linestyle="--",
                      alpha=0.85, label=f"Asian MR Component (+{stats.asian_pnl_usd:,.2f} USD)")
+        if london_equity and len(london_equity) == len(equity_dates):
+            ax3.plot(equity_dates, london_equity, color=COLOR_LONDON, linewidth=1.2, linestyle="--",
+                     alpha=0.85, label=f"London ORB Component (+{stats.london_pnl_usd:,.2f} USD)")
         if ny_equity and len(ny_equity) == len(equity_dates):
             ax3.plot(equity_dates, ny_equity, color=COLOR_NY, linewidth=1.2, linestyle="--",
                      alpha=0.85, label=f"NY ORB Component (+{stats.ny_pnl_usd:,.2f} USD)")
@@ -225,21 +262,33 @@ def plot_portfolio_dashboard(
         # Start account balance strictly from 10,000 (Initial Capital), not 0
         y_max = max(equity_curve) * 1.05
         ax3.set_ylim(bottom=stats.initial_capital, top=y_max)
-        y_ticks = [stats.initial_capital] + [t for t in range(100000, int(y_max) + 50000, 100000)]
+
+        y_range = y_max - stats.initial_capital
+        if y_range > 2_000_000:
+            step = 1_000_000
+        elif y_range > 500_000:
+            step = 250_000
+        elif y_range > 150_000:
+            step = 100_000
+        else:
+            step = 25_000
+
+        first_tick = int(np.ceil(stats.initial_capital / step) * step)
+        y_ticks = [stats.initial_capital] + [t for t in range(first_tick, int(y_max) + step, step) if t > stats.initial_capital]
         ax3.set_yticks(y_ticks)
-        ax3.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f"${int(x):,}" if x >= 1000 else f"{int(x)}"))
+        ax3.yaxis.set_major_formatter(plt.FuncFormatter(
+            lambda x, p: f"${x/1_000_000:.1f}M" if x >= 1_000_000 else (f"${int(x/1000):,}k" if x >= 10000 else f"${int(x):,}")
+        ))
 
         # Kotak ringkasan metrik kinerja HUD di area kosong atas-tengah
         metrics_box = (
-            f"Net PnL: +{stats.total_net_pnl_usd:,.2f} USD (+{stats.roi_pct:.1f}%)  |  "
-            f"Win Rate: {stats.win_rate:.1f}% ({stats.winning_trades}W / {stats.losing_trades}L)  |  "
-            f"Profit Factor: {stats.profit_factor:.2f}  |  "
-            f"Sharpe: {stats.sharpe_ratio:.2f}  |  "
-            f"Max DD: {stats.max_drawdown_pct:.2f}% ({stats.max_drawdown_usd:,.2f} USD)"
-        )
+            f"Net PnL: +${stats.total_net_pnl_usd:,.2f} USD (+{stats.roi_pct:.1f}%) | PF: {stats.profit_factor:.2f} | Sharpe: {stats.sharpe_ratio:.2f} | Sortino: {stats.sortino_ratio:.2f} | Calmar: {stats.calmar_ratio:.2f}\n"
+            f"Win Rate: {stats.win_rate:.1f}% ({stats.winning_trades}W / {stats.losing_trades}L) | Expectancy: ${stats.expectancy_usd:+,.2f} | "
+            f"Max DD: {stats.max_drawdown_pct:.2f}% (${stats.max_drawdown_usd:,.2f}) | VaR(95%): {stats.var_95_pct:.2f}%"
+        ).replace("$", r"\$")
 
         ax3.text(
-            0.58, 0.88, metrics_box, transform=ax3.transAxes, fontsize=8.5, fontweight="bold",
+            0.55, 0.88, metrics_box, transform=ax3.transAxes, fontsize=8.2, fontweight="bold",
             ha="center", va="top", color="#e0f2fe",
             bbox=dict(boxstyle="round,pad=0.4", facecolor="#1e293b", edgecolor="#8b5cf6", alpha=0.95)
         )
@@ -290,21 +339,38 @@ def print_monthly_attribution_table(monthly_df: pd.DataFrame) -> None:
     if monthly_df.empty:
         return
 
-    print("=" * 68)
-    print("   MONTHLY ATTRIBUTION TABLE (ASIAN MR vs NY ORB)")
-    print("=" * 68)
-    print(f"{'Month':<10} | {'Asian MR PnL':>15} | {'NY ORB PnL':>15} | {'Total PnL':>15}")
-    print("-" * 68)
+    has_london = "LONDON_ORB" in monthly_df.columns
+    if has_london:
+        sep_len = 86
+        header = f"{'Month':<10} | {'Asian MR PnL':>15} | {'London ORB PnL':>15} | {'NY ORB PnL':>15} | {'Total PnL':>15}"
+    else:
+        sep_len = 68
+        header = f"{'Month':<10} | {'Asian MR PnL':>15} | {'NY ORB PnL':>15} | {'Total PnL':>15}"
+
+    print("=" * sep_len)
+    print(f"   MONTHLY ATTRIBUTION TABLE ({'ASIAN MR + LONDON ORB + NY ORB' if has_london else 'ASIAN MR vs NY ORB'})")
+    print("=" * sep_len)
+    print(header)
+    print("-" * sep_len)
 
     for idx, row in monthly_df.iterrows():
         a_pnl = row.get("ASIAN_MR", 0.0)
+        lon_pnl = row.get("LONDON_ORB", 0.0)
         ny_pnl = row.get("NY_ORB", 0.0)
         tot = row.get("TOTAL", 0.0)
-        print(f"{idx:<10} | {a_pnl:>+14.2f}$ | {ny_pnl:>+14.2f}$ | {tot:>+14.2f}$")
+        if has_london:
+            print(f"{idx:<10} | {a_pnl:>+14.2f}$ | {lon_pnl:>+14.2f}$ | {ny_pnl:>+14.2f}$ | {tot:>+14.2f}$")
+        else:
+            print(f"{idx:<10} | {a_pnl:>+14.2f}$ | {ny_pnl:>+14.2f}$ | {tot:>+14.2f}$")
 
-    print("-" * 68)
+    print("-" * sep_len)
     tot_a = monthly_df["ASIAN_MR"].sum() if "ASIAN_MR" in monthly_df.columns else 0.0
+    tot_lon = monthly_df["LONDON_ORB"].sum() if "LONDON_ORB" in monthly_df.columns else 0.0
     tot_ny = monthly_df["NY_ORB"].sum() if "NY_ORB" in monthly_df.columns else 0.0
     tot_all = monthly_df["TOTAL"].sum() if "TOTAL" in monthly_df.columns else 0.0
-    print(f"{'TOTAL':<10} | {tot_a:>+14.2f}$ | {tot_ny:>+14.2f}$ | {tot_all:>+14.2f}$")
-    print("=" * 68 + "\n")
+
+    if has_london:
+        print(f"{'TOTAL':<10} | {tot_a:>+14.2f}$ | {tot_lon:>+14.2f}$ | {tot_ny:>+14.2f}$ | {tot_all:>+14.2f}$")
+    else:
+        print(f"{'TOTAL':<10} | {tot_a:>+14.2f}$ | {tot_ny:>+14.2f}$ | {tot_all:>+14.2f}$")
+    print("=" * sep_len + "\n")

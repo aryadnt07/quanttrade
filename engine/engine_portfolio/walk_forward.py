@@ -124,17 +124,23 @@ def print_walk_forward_report(res: Dict[str, Any]) -> None:
     s_oos = res["stats_oos"]
     s_full = res["stats_full"]
     wfe_roi = res["wfe_roi"]
+    df_raw = res["df_raw"]
+    split_dt = res["split_dt"]
+
+    is_start = df_raw["datetime"].iloc[0].strftime("%Y-%m")
+    split_str = split_dt.strftime("%Y-%m")
+    oos_end = df_raw["datetime"].iloc[-1].strftime("%Y-%m")
 
     sep = "=" * 76
     subsep = "-" * 76
 
     print(f"\n{sep}")
     print("   WALK-FORWARD / OUT-OF-SAMPLE BLIND SPLIT ROBUSTNESS REPORT")
-    print("   In-Sample (Year 1: 2024-2025) vs Out-of-Sample (Year 2: 2025-2026)")
+    print(f"   In-Sample (Training: {is_start} s/d {split_str}) vs Out-of-Sample (Blind Test: {split_str} s/d {oos_end})")
     print(f"{sep}")
-    print(f"  Metrik Evaluasi           |   In-Sample (Year 1)  |  Out-of-Sample (Year 2) | Status")
+    print(f"  Metrik Evaluasi           |   In-Sample (Training)|  Out-of-Sample (Blind) | Status")
     print(f"{subsep}")
-    print(f"  Periode Kalender          | 2024-09 s/d 2025-09   | 2025-09 s/d 2026-09     | 1 Tahun / 1 Tahun")
+    print(f"  Periode Kalender          | {is_start} s/d {split_str}   | {split_str} s/d {oos_end}     | Blind Out-of-Sample Split")
     print(f"  Modal Awal (Normalized)   | $10,000.00 USD        | $10,000.00 USD          | Apples-to-Apples")
     print(f"  Modal Akhir               | ${s_is.ending_capital:12,.2f} USD  | ${s_oos.ending_capital:12,.2f} USD  | Profit Konsisten")
     print(f"  Net PnL                   | +${s_is.total_net_pnl_usd:11,.2f} USD  | +${s_oos.total_net_pnl_usd:11,.2f} USD  | Robust")
@@ -193,15 +199,19 @@ def plot_walk_forward_dashboard(res: Dict[str, Any], save_path: str = "output/wa
         gridspec_kw={"hspace": 0.32},
     )
 
+    is_start = df_raw["datetime"].iloc[0].strftime("%b %Y")
+    split_str = split_dt.strftime("%b %Y")
+    oos_end = df_raw["datetime"].iloc[-1].strftime("%b %Y")
+
     fig.suptitle(
-        "Walk-Forward / Out-of-Sample Blind Split Robustness Dashboard\n"
-        "In-Sample (Year 1 Training: Sep 2024–Sep 2025) vs Out-of-Sample (Year 2 Blind Test: Sep 2025–Sep 2026)",
+        f"Walk-Forward / Out-of-Sample Blind Split Robustness Dashboard\n"
+        f"In-Sample (Training: {is_start}–{split_str}) vs Out-of-Sample (Blind Test: {split_str}–{oos_end})",
         fontsize=15, fontweight="bold", color="#38bdf8", y=0.988
     )
 
     # ── PANEL 1: Continuous Price Action with IS/OOS Zones ──
     ax0 = axes[0]
-    ax0.set_title("XAU/USD M5 Price Action with In-Sample (Year 1) & Out-of-Sample (Year 2) Split Demarcation",
+    ax0.set_title(f"XAU/USD M5 Price Action with In-Sample ({is_start}–{split_str}) & Out-of-Sample ({split_str}–{oos_end}) Demarcation",
                   fontsize=11, fontweight="bold", color="#93c5fd", loc="left")
 
     step = max(1, len(df_raw) // 1600)
@@ -211,11 +221,11 @@ def plot_walk_forward_dashboard(res: Dict[str, Any], save_path: str = "output/wa
     # Shading zona IS dan OOS
     min_dt = df_raw["datetime"].iloc[0]
     max_dt = df_raw["datetime"].iloc[-1]
-    ax0.axvspan(min_dt, split_dt, color=COLOR_IS, alpha=0.06, label="In-Sample Zone (Year 1: Training Period)")
-    ax0.axvspan(split_dt, max_dt, color=COLOR_OOS, alpha=0.06, label="Out-of-Sample Zone (Year 2: Blind Test Period)")
+    ax0.axvspan(min_dt, split_dt, color=COLOR_IS, alpha=0.06, label=f"In-Sample Zone (Training: {is_start}–{split_str})")
+    ax0.axvspan(split_dt, max_dt, color=COLOR_OOS, alpha=0.06, label=f"Out-of-Sample Zone (Blind Test: {split_str}–{oos_end})")
 
     # Garis pemisah tegas
-    ax0.axvline(split_dt, color=COLOR_SPLIT, linestyle="--", linewidth=1.6, label="Blind Split Line (2025-09-08)")
+    ax0.axvline(split_dt, color=COLOR_SPLIT, linestyle="--", linewidth=1.6, label=f"Blind Split Line ({split_dt.strftime('%Y-%m-%d')})")
 
     # Plot trade markers
     for t in engine_full.trades[::4]:  # sampled marker for speed & clarity
@@ -278,10 +288,11 @@ def plot_walk_forward_dashboard(res: Dict[str, Any], save_path: str = "output/wa
         pnls = m_df["TOTAL"].tolist()
         x_m = np.arange(len(months))
 
-        # Tentukan apakah bulan berada di IS (< 2025-09) atau OOS (>= 2025-09)
+        split_m_str = split_dt.strftime("%Y-%m")
+        # Tentukan apakah bulan berada di IS (< split_m_str) atau OOS (>= split_m_str)
         colors = []
         for m_str in months:
-            if m_str < "2025-09":
+            if m_str < split_m_str:
                 colors.append(COLOR_IS)
             else:
                 colors.append(COLOR_OOS)
@@ -292,12 +303,12 @@ def plot_walk_forward_dashboard(res: Dict[str, Any], save_path: str = "output/wa
         # Garis pemisah bulan IS dan OOS
         split_idx = 0
         for idx, m_str in enumerate(months):
-            if m_str >= "2025-09":
+            if m_str >= split_m_str:
                 split_idx = idx
                 break
         if split_idx > 0:
             ax2.axvline(split_idx - 0.5, color=COLOR_SPLIT, linestyle="--", linewidth=1.5,
-                        label="Blind Split Boundary (Sep 2025)")
+                        label=f"Blind Split Boundary ({split_dt.strftime('%b %Y')})")
 
         # Label nominal di setiap bar
         max_abs = max(abs(p) for p in pnls) if pnls else 100
@@ -329,16 +340,27 @@ def plot_walk_forward_dashboard(res: Dict[str, Any], save_path: str = "output/wa
     c_oos = engine_oos.equity_curve
 
     ax3.plot(range(len(c_is)), c_is, color=COLOR_IS, linewidth=2.0,
-             label=f"In-Sample (Year 1): ${stats_is.ending_capital:,.2f} USD (+{stats_is.roi_pct:.1f}%)".replace("$", r"\$"))
+             label=f"In-Sample (Training): ${stats_is.ending_capital:,.2f} USD (+{stats_is.roi_pct:.1f}%)".replace("$", r"\$"))
     ax3.plot(range(len(c_oos)), c_oos, color=COLOR_OOS, linewidth=2.0,
-             label=f"Out-of-Sample (Year 2 Blind): ${stats_oos.ending_capital:,.2f} USD (+{stats_oos.roi_pct:.1f}%)".replace("$", r"\$"))
+             label=f"Out-of-Sample (Blind): ${stats_oos.ending_capital:,.2f} USD (+{stats_oos.roi_pct:.1f}%)".replace("$", r"\$"))
 
     ax3.axhline(10_000, color="#6b7280", linestyle=":", label="Initial Capital (10,000 USD)")
 
     # Sumbu Y strictly starts at 10,000 USD without 0 tick
     y_max = max(max(c_is), max(c_oos)) * 1.08
     ax3.set_ylim(bottom=10_000, top=y_max)
-    y_ticks = [10_000] + [t for t in range(20_000, int(y_max) + 10_000, 10_000)]
+    span = y_max - 10_000
+    if span > 300_000:
+        tick_step = 50_000
+    elif span > 100_000:
+        tick_step = 25_000
+    elif span > 40_000:
+        tick_step = 10_000
+    elif span > 20_000:
+        tick_step = 5_000
+    else:
+        tick_step = 2_000
+    y_ticks = [10_000] + [t for t in range(int(10_000 + tick_step), int(y_max) + int(tick_step), int(tick_step))]
     ax3.set_yticks(y_ticks)
     ax3.yaxis.set_major_formatter(ticker.FuncFormatter(lambda x, p: f"${int(x):,}" if x >= 1000 else f"{int(x)}"))
 

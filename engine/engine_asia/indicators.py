@@ -219,7 +219,7 @@ def calc_htf_ema(
         left_on="datetime",
         right_index=True,
     )
-    return merged["htf_ema"].bfill()
+    return merged["htf_ema"]  # Keep NaN for early bars — HTF filter won't apply, trade allowed
 
 
 # ═══════════════════════════════════════════════
@@ -266,9 +266,12 @@ def compute_all(df: pd.DataFrame) -> pd.DataFrame:
 
     # 7. HTF EMA (H1 EMA 200)
     if getattr(cfg, "USE_HTF_TREND_FILTER", False):
-        htf_tf = getattr(cfg, "HTF_TIMEFRAME", "1h")
-        htf_p = getattr(cfg, "HTF_EMA_PERIOD", 200)
-        df["htf_ema"] = calc_htf_ema(df, htf=htf_tf, period=htf_p)
+        if "h1_ema200" in df.columns:
+            df["htf_ema"] = df["h1_ema200"]
+        elif "htf_ema" not in df.columns:
+            htf_tf = getattr(cfg, "HTF_TIMEFRAME", "1h")
+            htf_p = getattr(cfg, "HTF_EMA_PERIOD", 200)
+            df["htf_ema"] = calc_htf_ema(df, htf=htf_tf, period=htf_p)
 
     # 8. Band (untuk visualisasi)
     df["upper_band"] = df["anchor"] + (cfg.Z_ENTRY_THRESHOLD * df["std"])

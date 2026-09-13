@@ -51,3 +51,11 @@ scratch/
 *.tmp
 *.log
 !portfolio_log.txt
+
+# Large Dataset Files (>100MB GitHub limit)
+data/*m1*.csv
+
+# Environment & Credentials
+.env
+*.key
+credentials.json

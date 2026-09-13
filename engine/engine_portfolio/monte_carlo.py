@@ -32,9 +32,9 @@ from engine.engine_ny.ny_strategy import compute_ny_indicators
 from engine.engine_ny.ny_engine import NYBacktester
 
 
-def extract_baseline_trades():
+def extract_baseline_trades(data_path: str = "data/xauusd-m5-bid-2021-09-08-2026-09-08.csv"):
     """Ekstraksi seluruh trade baseline murni (sebelum scaling compounding)."""
-    df_raw = load_csv("data/xauusd-m5-bid-2024-09-08-2026-09-08.csv")
+    df_raw = load_csv(data_path)
 
     # Modul Asia
     df_a = compute_asian_indicators(df_raw)
@@ -134,13 +134,13 @@ def simulate_single_sequence(trade_list, initial_capital=10_000.0, use_derisk=Tr
     return curr_equity, max_dd_pct, max_dd_usd, equity_curve
 
 
-def run_monte_carlo(n_iterations=1000, mode="reshuffle"):
+def run_monte_carlo(n_iterations=1000, mode="reshuffle", data_path="data/xauusd-m5-bid-2021-09-08-2026-09-08.csv"):
     """
     Jalankan N simulasi Monte Carlo.
     mode: 'reshuffle' (tanpa pengembalian / permutation) atau 'bootstrap' (dengan pengembalian)
     """
-    print(f"[*] Mengambil data 660 transaksi baseline...")
-    base_trades = extract_baseline_trades()
+    print(f"[*] Mengambil data transaksi baseline dari {data_path}...")
+    base_trades = extract_baseline_trades(data_path=data_path)
     n_trades = len(base_trades)
     print(f"    Ekstraksi selesai: {n_trades} trade (Asia + NY).")
 
