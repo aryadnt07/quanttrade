@@ -61,5 +61,7 @@ output/*
 
 # Environment & Credentials
 .env
+.env.*
+!.env.example
 *.key
 credentials.json

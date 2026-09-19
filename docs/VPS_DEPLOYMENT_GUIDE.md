@@ -39,14 +39,25 @@ cd quanttrade
 pip install -r requirements.txt
 ```
 
-### Langkah 4: Sesuaikan Kredensial di `configs/live_config.py`
-Buka file `configs/live_config.py` di VPS, sesuaikan akun Exness Anda:
-```python
-ACCOUNT_LOGIN    = 434215986            # Nomor login MT5 Anda
-ACCOUNT_SERVER   = "Exness-MT5Trial7"   # Nama server broker Anda
-SYMBOL           = "XAUUSD"
-MAGIC_NUMBER     = 888001
+### Langkah 4: Buat File `.env` untuk Kredensial Sensitif
+Di terminal VPS (atau via File Explorer), salin `.env.example` menjadi `.env`:
+```powershell
+copy .env.example .env
 ```
+Buka file `.env` dengan Notepad di VPS, lalu sesuaikan nomor akun MT5 dan token Telegram Anda:
+```ini
+# Kredensial Broker MetaTrader 5
+MT5_ACCOUNT_LOGIN=434215986
+MT5_ACCOUNT_PASSWORD=
+MT5_ACCOUNT_SERVER=Exness-MT5Trial7
+
+# Notifikasi Telegram (Option A: Balanced Mode)
+TELEGRAM_ENABLED=true
+TELEGRAM_BOT_TOKEN=123456789:ABCdefGhIJKlmNoPQRstuVWXyz
+TELEGRAM_CHAT_ID=123456789
+TELEGRAM_NOTIFY_MODE=BALANCED
+```
+> **Keamanan**: File `.env` bersifat privat dan secara otomatis diabaikan oleh Git (`.gitignore`), sehingga token atau password Anda tidak akan pernah bocor ke repository GitHub.
 
 ---
 

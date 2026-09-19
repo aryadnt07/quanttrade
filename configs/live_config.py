@@ -8,14 +8,65 @@ untuk 3 modul kuantitatif:
 3. New York Opening Range Breakout (09:45 - 12:30 NY Local / Dynamic UTC DST)
 """
 
+import os
+from pathlib import Path
+
+# ─────────────────────────────────────────────
+# 0. LOAD ENVIRONMENT VARIABLES (.env)
+# ─────────────────────────────────────────────
+_env_loaded = False
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).resolve().parent.parent / ".env"
+    if _env_path.exists():
+        load_dotenv(dotenv_path=_env_path, override=False)
+        _env_loaded = True
+except ImportError:
+    pass
+
+if not _env_loaded:
+    _env_path = Path(__file__).resolve().parent.parent / ".env"
+    if _env_path.exists():
+        try:
+            with open(_env_path, "r", encoding="utf-8") as _f:
+                for _line in _f:
+                    _line = _line.strip()
+                    if _line and not _line.startswith("#") and "=" in _line:
+                        _k, _v = _line.split("=", 1)
+                        os.environ.setdefault(_k.strip(), _v.strip().strip("'\""))
+        except Exception:
+            pass
+
+def _get_env_bool(key: str, default: bool) -> bool:
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    return val.strip().lower() in ("true", "1", "yes", "on")
+
+def _get_env_int(key: str, default: int) -> int:
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    try:
+        return int(val.strip())
+    except ValueError:
+        return default
+
+def _get_env_str(key: str, default: str) -> str:
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    return val.strip()
+
 # ─────────────────────────────────────────────
 # 1. KREDENSIAL AKUN BROKER MT5 (EXNESS / ECN)
 # ─────────────────────────────────────────────
-ACCOUNT_LOGIN           = 434215986                # Nomor Akun MT5
-ACCOUNT_SERVER          = "Exness-MT5Trial7"       # Server Broker MT5
-SYMBOL                  = "XAUUSD"                 # Simbol Gold di MT5
-MAGIC_NUMBER            = 888001                   # ID Unik Order Bot
-SLIPPAGE_POINTS         = 30                       # Toleransi slippage broker (points)
+ACCOUNT_LOGIN           = _get_env_int("MT5_ACCOUNT_LOGIN", 434215986)
+ACCOUNT_PASSWORD        = _get_env_str("MT5_ACCOUNT_PASSWORD", "")
+ACCOUNT_SERVER          = _get_env_str("MT5_ACCOUNT_SERVER", "Exness-MT5Trial7")
+SYMBOL                  = _get_env_str("MT5_SYMBOL", "XAUUSD")
+MAGIC_NUMBER            = _get_env_int("MT5_MAGIC_NUMBER", 888001)
+SLIPPAGE_POINTS         = _get_env_int("MT5_SLIPPAGE_POINTS", 30)
 
 # ─────────────────────────────────────────────
 # 2. MANAJEMEN RISIKO LIVE & ASYMMETRIC SIZING
@@ -34,7 +85,7 @@ POINT_VALUE             = 100.0                    # $100 per lot per $1 gerakan
 # ─────────────────────────────────────────────
 MAX_SPREAD_USD          = 0.60                     # Batas spread maksimal (USD)
 MAX_OPEN_TRADES         = 1                        # Maksimal 1 posisi aktif simultan (zero overlap)
-DRY_RUN                 = False                    # True = Simulasi sinyal tanpa kirim order riil; False = Live Order
+DRY_RUN                 = _get_env_bool("DRY_RUN", False)
 
 # Anti-Spam / Max-Retries Guard
 MAX_SESSION_RETRIES     = 3                        # Maksimal percobaan order jika ditolak broker sebelum lockout
@@ -91,9 +142,10 @@ NY_EXPANSION            = 1.5                      # Syarat Prior TR ekspansi > 
 # ─────────────────────────────────────────────
 # 8. TELEGRAM NOTIFICATIONS (OPTION A: BALANCED MODE)
 # ─────────────────────────────────────────────
-TELEGRAM_ENABLED        = False                    # Set True setelah mengisi BOT_TOKEN & CHAT_ID
-TELEGRAM_BOT_TOKEN      = ""                       # Token dari @BotFather (cth: "123456789:ABCdefGhIJKlmNoPQRstuVWXyz")
-TELEGRAM_CHAT_ID        = ""                       # ID Chat Telegram Anda (cth: "123456789")
-TELEGRAM_NOTIFY_MODE    = "BALANCED"               # "BALANCED" (Option A: Entry/Exit/Heartbeat/Alert), "ZEN" (Daily summary only), "OFF"
-TELEGRAM_HEARTBEAT_UTC_HOUR = 0                    # Kirim heartbeat harian jam 00:00 UTC
+TELEGRAM_ENABLED        = _get_env_bool("TELEGRAM_ENABLED", False)
+TELEGRAM_BOT_TOKEN      = _get_env_str("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID        = _get_env_str("TELEGRAM_CHAT_ID", "")
+TELEGRAM_NOTIFY_MODE    = _get_env_str("TELEGRAM_NOTIFY_MODE", "BALANCED")
+TELEGRAM_HEARTBEAT_UTC_HOUR = _get_env_int("TELEGRAM_HEARTBEAT_UTC_HOUR", 0)
+
 

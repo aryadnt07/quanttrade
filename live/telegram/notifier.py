@@ -205,8 +205,8 @@ def test_telegram_connection() -> bool:
 
     if not notifier.is_configured:
         print("\n[!] PERINGATAN: Konfigurasi Telegram belum lengkap atau belum aktif.")
-        print("    Silakan buka file `configs/live_config.py` dan isi:")
-        print("    TELEGRAM_ENABLED   = True")
+        print("    Silakan buka file `.env` (atau `configs/live_config.py`) dan isi:")
+        print("    TELEGRAM_ENABLED   = true")
         print("    TELEGRAM_BOT_TOKEN = \"<TOKEN_BOT_ANDA>\"")
         print("    TELEGRAM_CHAT_ID   = \"<CHAT_ID_ANDA>\"")
         print("========================================================\n")
