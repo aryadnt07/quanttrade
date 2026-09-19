@@ -188,7 +188,15 @@ class LivePortfolioTrader:
 
         try:
             while True:
-                is_active_window = self._tick_cycle()
+                now_utc = datetime.now(timezone.utc)
+
+                # ── WEEKEND STANDBY MODE (HEMAT CPU & ZERO TICK POLLING) ──
+                if self._is_market_closed_weekend(now_utc):
+                    self._weekend_standby_cycle(now_utc)
+                    time.sleep(60.0)  # Tidur 60 detik (ultra hemat CPU saat market tutup)
+                    continue
+
+                is_active_window = self._tick_cycle(now_utc)
                 # Latensi Rendah: Polling 100ms saat di jendela breakout, 1.0s saat idle (Point #1 Audit)
                 sleep_duration = lcfg.POLL_INTERVAL_FAST_SEC if is_active_window else lcfg.POLL_INTERVAL_IDLE_SEC
                 time.sleep(sleep_duration)
@@ -279,18 +287,55 @@ class LivePortfolioTrader:
                             ping = float(term.ping_last) / 1000.0
                     except Exception:
                         pass
+
+                    is_wknd = self._is_market_closed_weekend(datetime.now(timezone.utc))
+                    next_sess = "Weekend Standby (Market Opens Monday 01:00 UTC)" if is_wknd else "Asian Session (01:00 UTC)"
+
                     self.telegram.notify_daily_heartbeat(
                         balance=acc.balance,
                         equity=acc.equity,
                         free_margin=acc.free_margin,
                         server=acc.server,
                         latency_ms=ping,
-                        next_session="Asian Session (01:00 UTC)"
+                        next_session=next_sess
                     )
 
-    def _tick_cycle(self) -> bool:
+    @staticmethod
+    def _is_market_closed_weekend(now_utc: datetime) -> bool:
+        """Deteksi apakah pasar XAU/USD sedang tutup di akhir pekan.
+
+        Jadwal Pasar XAU/USD:
+        - Tutup        : Jumat pukul 22:00 UTC (Sabtu 05:00 WIB)
+        - Buka Kembali : Minggu pukul 22:00 UTC (Senin 05:00 WIB)
+        """
+        wd = now_utc.weekday()
+        # Jumat malam setelah 22:00 UTC
+        if wd == 4 and now_utc.hour >= 22:
+            return True
+        # Sabtu seharian penuh
+        if wd == 5:
+            return True
+        # Minggu sebelum jam 22:00 UTC
+        if wd == 6 and now_utc.hour < 22:
+            return True
+        return False
+
+    def _weekend_standby_cycle(self, now_utc: datetime):
+        """Siklus hibernasi akhir pekan (ultra hemat CPU, zero MT5 tick polling)."""
+        today_date = now_utc.date()
+        self._reset_daily_state_if_needed(today_date)
+
+        curr_time_sec = time.time()
+        # Cetak log setiap 30 menit sekali agar terminal bersih dan tidak spam
+        if curr_time_sec - self.last_heartbeat_time >= 1800.0 or self.last_heartbeat_time == 0.0:
+            self.last_heartbeat_time = curr_time_sec
+            day_name = now_utc.strftime("%A")
+            print(f"[{now_utc.strftime('%H:%M:%S')} UTC] [😴 WEEKEND STANDBY] Pasar {lcfg.SYMBOL} tutup ({day_name}). Bot hibernasi hemat CPU (Next: Senin 01:00 UTC).")
+
+    def _tick_cycle(self, now_utc: Optional[datetime] = None) -> bool:
         """Siklus evaluasi pasar. Mengembalikan True jika berada dalam jendela aktif."""
-        now_utc = datetime.now(timezone.utc)
+        if now_utc is None:
+            now_utc = datetime.now(timezone.utc)
         today_date = now_utc.date()
         self._reset_daily_state_if_needed(today_date)
 
