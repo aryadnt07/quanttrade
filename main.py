@@ -9,6 +9,7 @@ Subcommands:
     london          Eksekusi standalone London Pit ORB
     ny              Eksekusi standalone New York ORB
     live            Uji koneksi atau jalankan MT5 Live Execution Runner
+    live-check      Uji komprehensif kesiapan sistem live trading (8 tahap diagnostik)
     monte-carlo     Jalankan simulasi stress test Monte Carlo
     walk-forward    Jalankan validasi Out-Of-Sample Walk-Forward
     friction-decay  Jalankan stress test ketahanan Friction & Slippage
@@ -21,6 +22,7 @@ Usage:
     python main.py london [args...]
     python main.py ny [args...]
     python main.py live [--check-only]
+    python main.py live-check
     python main.py monte-carlo [-n 1000]
     python main.py walk-forward
     python main.py friction-decay
@@ -109,6 +111,9 @@ def main():
     parser_ps.add_argument("--data", type=str, default="data/xauusd-m5-bid-2024-09-08-2026-09-08.csv", help="Path data CSV")
     parser_ps.add_argument("--save-chart", type=str, default="output/sensitivity_surface_dashboard.png", help="Path output chart")
 
+    # ── 10. LIVE CHECK (PRE-EXECUTION SYSTEM DIAGNOSTIC) ──
+    parser_live_check = subparsers.add_parser("live-check", help="Jalankan uji kesiapan & diagnostik menyeluruh sistem live (8 tahap)")
+
     # Jika dipanggil tanpa argumen sama sekali, default ke master portfolio
     if len(sys.argv) == 1:
         sys.argv.append("portfolio")
@@ -143,6 +148,10 @@ def main():
             from live.live_runner import LivePortfolioTrader
             runner = LivePortfolioTrader()
             runner.start()
+
+    elif args.command == "live-check":
+        from live.live_system_check import main as live_check_main
+        sys.exit(live_check_main())
 
     elif args.command == "monte-carlo":
         from scripts.run_monte_carlo import main as mc_main

@@ -190,12 +190,13 @@ class MT5Connector:
             return mt5.ORDER_FILLING_IOC
 
         fill_flags = sym_info.filling_mode
-        if fill_flags & mt5.SYMBOL_FILLING_IOC:
-            return mt5.ORDER_FILLING_IOC
-        elif fill_flags & mt5.SYMBOL_FILLING_FOK:
-            return mt5.ORDER_FILLING_FOK
+        # MT5 symbol filling bitmask: 1 = FOK, 2 = IOC
+        if fill_flags & 2:
+            return getattr(mt5, "ORDER_FILLING_IOC", 1)
+        elif fill_flags & 1:
+            return getattr(mt5, "ORDER_FILLING_FOK", 0)
         else:
-            return mt5.ORDER_FILLING_RETURN
+            return getattr(mt5, "ORDER_FILLING_RETURN", 2)
 
     def open_market_order(
         self,

@@ -149,12 +149,21 @@ python main.py sensitivity
 
 ### 4. Live Trading & MT5 Execution
 ```bash
-# Verify MT5 broker connection & health check
+# 1-Stage Connection Health Check
 python main.py live --check-only
 
-# Start live multi-session execution bot
+# Comprehensive 8-Stage System Readiness Diagnostic & Dry-Run
+python main.py live-check
+
+# Start live multi-session execution bot (24/7 Engine)
 python main.py live
 ```
+
+> **VPS Automation Shortcuts** (inside `deploy/` directory):
+> - `deploy/TEST_LIVE_SYSTEM.bat`: 1-Click 8-stage pre-flight readiness diagnostic (Zero-risk broker dry-run).
+> - `deploy/CHECK_CONNECTION.bat`: 1-Click quick MT5 ping & account check.
+> - `deploy/START_LIVE_BOT.bat`: 1-Click launcher for 24/7 automated live trading.
+> - `deploy/UPDATE_LIVE_BOT.bat`: 1-Click hot-reloader (graceful stop, `git pull`, and auto-restart).
 
 ---
 

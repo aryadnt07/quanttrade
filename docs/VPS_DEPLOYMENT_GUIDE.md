@@ -50,16 +50,28 @@ MAGIC_NUMBER     = 888001
 
 ---
 
-## 3. Menjalankan Bot di VPS (1-Click)
+## 3. Menjalankan & Menguji Bot di VPS (1-Click Automation)
 
-Di dalam folder `deploy/` (atau bisa Anda buatkan shortcut-nya ke Desktop VPS), Anda memiliki 3 file otomasi:
+Di dalam folder `deploy/` (atau bisa Anda buatkan shortcut-nya ke Desktop VPS), Anda memiliki alat otomasi berikut:
 
-### A. Cek Koneksi Broker (`deploy/CHECK_CONNECTION.bat`)
-* Klik 2x file `deploy/CHECK_CONNECTION.bat`.
-* Sistem akan memverifikasi koneksi MT5, saldo akun, spread XAU/USD live, dan izin AlgoTrading.
-* Jika muncul `[✓] KONEKSI 100% SIAP UNTUK ALGO TRADING LIVE!`, berarti sistem siap.
+### A. Uji Kesiapan & Diagnostik Sistem Menyeluruh (`deploy/TEST_LIVE_SYSTEM.bat`)
+* **SANGAT DIREKOMENDASIKAN** dijalankan pertama kali setelah instalasi VPS atau sebelum menghidupkan bot 24 jam.
+* Klik 2x file `deploy/TEST_LIVE_SYSTEM.bat`.
+* Menjalankan **8 Tahap Diagnostik Institusional**:
+  1. *Host Environment & UTC Clock Sync* (validasi Python 64-bit & jam UTC).
+  2. *MT5 IPC Handshake & Latency* (mengukur ping ke terminal MT5).
+  3. *Broker Account & AlgoTrading Permission* (audit saldo, leverage, margin, izin Algo Trading).
+  4. *Live Market Telemetry & Spread* (cek live bid/ask, spread XAU/USD, spesifikasi lot).
+  5. *Broker Data Feed Integrity* (uji download bar M5 & M1, cek missing bar / NaN).
+  6. *Live Indicator Math Verification* (kalkulasi live Z-score Asian, LORB TR_SMA20, NY ORB).
+  7. *Risk Management & Safety Gates* (audit lot size per session, slippage tolerance, anti-chase ceiling, anti-spam retry).
+  8. *Broker Order Validation (Zero-Risk Dry-Run)* (mengirim payload order uji coba via `order_check` ke server Exness tanpa membuka posisi riil dan tanpa risiko saldo).
+* Jika scorecard menyatakan `OPERASIONAL & SIAP LIVE`, sistem telah terverifikasi 100% siap!
 
-### B. Menjalankan Bot 24/7 (`deploy/START_LIVE_BOT.bat`)
+### B. Cek Cepat Koneksi Broker (`deploy/CHECK_CONNECTION.bat`)
+* Klik 2x file `deploy/CHECK_CONNECTION.bat` untuk ping cepat 5 detik memeriksa status login dan koneksi MT5.
+
+### C. Menjalankan Bot 24/7 (`deploy/START_LIVE_BOT.bat`)
 * Klik 2x file `deploy/START_LIVE_BOT.bat`.
 * Bot akan langsung aktif dan otomatis memantau 3 sesi pasar (Asia 01:00 UTC, London 08:15 UTC, NY 13:45 UTC).
 * **Tips RDP**: Anda bisa menutup (*minimize* / *close*) jendela Remote Desktop (RDP) kapan saja. Bot akan tetap berjalan di background VPS!
