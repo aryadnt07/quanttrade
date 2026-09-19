@@ -140,8 +140,8 @@ def main():
             from live.test_connection import main as live_test
             live_test()
         else:
-            from live.live_runner import LiveTradingRunner
-            runner = LiveTradingRunner()
+            from live.live_runner import LivePortfolioTrader
+            runner = LivePortfolioTrader()
             runner.start()
 
     elif args.command == "monte-carlo":
