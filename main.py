@@ -10,6 +10,7 @@ Subcommands:
     ny              Eksekusi standalone New York ORB
     live            Uji koneksi atau jalankan MT5 Live Execution Runner
     live-check      Uji komprehensif kesiapan sistem live trading (8 tahap diagnostik)
+    telegram-test   Uji koneksi dan pengiriman notifikasi ke Telegram Bot
     monte-carlo     Jalankan simulasi stress test Monte Carlo
     walk-forward    Jalankan validasi Out-Of-Sample Walk-Forward
     friction-decay  Jalankan stress test ketahanan Friction & Slippage
@@ -23,6 +24,7 @@ Usage:
     python main.py ny [args...]
     python main.py live [--check-only]
     python main.py live-check
+    python main.py telegram-test
     python main.py monte-carlo [-n 1000]
     python main.py walk-forward
     python main.py friction-decay
@@ -114,6 +116,9 @@ def main():
     # ── 10. LIVE CHECK (PRE-EXECUTION SYSTEM DIAGNOSTIC) ──
     parser_live_check = subparsers.add_parser("live-check", help="Jalankan uji kesiapan & diagnostik menyeluruh sistem live (8 tahap)")
 
+    # ── 11. TELEGRAM TEST ──
+    parser_tg = subparsers.add_parser("telegram-test", help="Uji koneksi dan pengiriman notifikasi ke Telegram Bot")
+
     # Jika dipanggil tanpa argumen sama sekali, default ke master portfolio
     if len(sys.argv) == 1:
         sys.argv.append("portfolio")
@@ -152,6 +157,11 @@ def main():
     elif args.command == "live-check":
         from live.live_system_check import main as live_check_main
         sys.exit(live_check_main())
+
+    elif args.command == "telegram-test":
+        from live.telegram_notifier import test_telegram_connection
+        success = test_telegram_connection()
+        sys.exit(0 if success else 1)
 
     elif args.command == "monte-carlo":
         from scripts.run_monte_carlo import main as mc_main

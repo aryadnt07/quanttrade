@@ -86,5 +86,14 @@ NY_OR_END               = (13, 45)                 # 13:45 UTC (Pembentukan Box 
 NY_ENTRY_START          = (13, 45)                 # 13:45 UTC
 NY_ENTRY_END            = (16, 30)                 # 16:30 UTC
 NY_CUTOFF_TIME          = (16, 25)                 # 16:25 UTC
-NY_TARGET_RR            = 2.0                      # Target Reward:Risk 2.0R
 NY_EXPANSION            = 1.5                      # Syarat Prior TR ekspansi > 1.5x SMA20
+
+# ─────────────────────────────────────────────
+# 8. TELEGRAM NOTIFICATIONS (OPTION A: BALANCED MODE)
+# ─────────────────────────────────────────────
+TELEGRAM_ENABLED        = False                    # Set True setelah mengisi BOT_TOKEN & CHAT_ID
+TELEGRAM_BOT_TOKEN      = ""                       # Token dari @BotFather (cth: "123456789:ABCdefGhIJKlmNoPQRstuVWXyz")
+TELEGRAM_CHAT_ID        = ""                       # ID Chat Telegram Anda (cth: "123456789")
+TELEGRAM_NOTIFY_MODE    = "BALANCED"               # "BALANCED" (Option A: Entry/Exit/Heartbeat/Alert), "ZEN" (Daily summary only), "OFF"
+TELEGRAM_HEARTBEAT_UTC_HOUR = 0                    # Kirim heartbeat harian jam 00:00 UTC
+

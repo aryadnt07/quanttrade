@@ -34,6 +34,7 @@ import MetaTrader5 as mt5
 
 from live.mt5_connector import MT5Connector, translate_retcode
 from live import live_config as lcfg
+from live.telegram_notifier import TelegramNotifier
 
 # Indikator dan Logika Sinyal Asia
 from engine.asia.indicators import compute_all as compute_asian_indicators
@@ -99,8 +100,11 @@ class LivePortfolioTrader:
 
     def __init__(self):
         self.connector = MT5Connector()
+        self.telegram = TelegramNotifier()
         self.current_trading_day: Optional[date] = None
         self.today_schedule: Dict[str, Any] = {}
+        self.tracked_positions: Dict[int, Dict[str, Any]] = {}
+        self.last_daily_heartbeat_day: Optional[date] = None
 
         # Tracker harian status eksekusi sesi (anti-double trade)
         self.trades_today = {
@@ -141,10 +145,13 @@ class LivePortfolioTrader:
         print(f"   Mode Eksekusi Breakout : [{lcfg.BREAKOUT_EXECUTION_MODE}]")
         print(f"   Dynamic DST Tracking   : [{'ON (Wall Street Local Time)' if lcfg.USE_DYNAMIC_DST else 'OFF'}]")
         print(f"   Mode Trading           : {'[DRY RUN - SIMULASI]' if lcfg.DRY_RUN else '[REAL ORDER EXECUTION]'}")
+        tg_status = f"ON ({self.telegram.mode} - Option A)" if self.telegram.is_configured else "OFF (Set in configs/live_config.py)"
+        print(f"   Telegram Notifier      : [{tg_status}]")
         print("=" * 76 + "\n")
 
         if not self.connector.connect():
             print("[X] GAGAL: Tidak dapat terhubung ke MetaTrader 5. Pastikan MT5 terbuka dan login.")
+            self.telegram.notify_critical_alert("Koneksi MT5 Gagal", "Bot tidak dapat terhubung ke terminal MetaTrader 5.")
             return
 
         acc = self.connector.get_account_status()
@@ -161,6 +168,18 @@ class LivePortfolioTrader:
                 print("  hingga ikon berubah menjadi HIJAU agar order dapat dikirim.")
                 print("!" * 76 + "\n")
 
+            if self.telegram.is_configured:
+                self.telegram.send_message(
+                    f"<b>🚀 [SYSTEM STARTUP] QuantTrade 24/7 Engine</b>\n"
+                    f"━━━━━━━━━━━━━━━━━━━━\n"
+                    f"Bot live execution telah aktif di Windows VPS.\n"
+                    f"• <b>Akun:</b> <code>{acc.login} ({acc.server})</code>\n"
+                    f"• <b>Saldo:</b> <code>${acc.balance:,.2f} USD</code>\n"
+                    f"• <b>Mode:</b> <code>{self.telegram.mode} (Option A)</code>\n"
+                    f"• <b>Simbol:</b> <code>{lcfg.SYMBOL}</code>\n"
+                    f"• <b>Waktu:</b> <code>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</code>"
+                )
+
         # Sinkronkan status transaksi hari ini dari broker
         self._sync_state_from_broker()
 
@@ -175,16 +194,35 @@ class LivePortfolioTrader:
                 time.sleep(sleep_duration)
         except KeyboardInterrupt:
             print("\n[!] Perintah berhenti diterima. Mematikan bot...")
+        except Exception as e:
+            err_msg = f"Runtime loop exception: {str(e)}"
+            print(f"\n[💥 CRITICAL EXCEPTION] {err_msg}")
+            self.telegram.notify_critical_alert("Runtime Exception", err_msg)
+            raise e
         finally:
             self.connector.shutdown()
             print("[✓] Koneksi MT5 ditutup dengan aman. Bot berhenti.")
 
     def _sync_state_from_broker(self):
         """Sinkronkan status transaksi hari ini agar aman saat bot di-restart."""
-        # 1. Cek posisi terbuka
+        # 1. Cek posisi terbuka dan sinkronkan tracker posisi
         open_pos = self.connector.get_open_positions(lcfg.MAGIC_NUMBER)
         for p in open_pos:
             comm = p.comment
+            sess = "Asia MR" if "Asia" in comm else ("London ORB" if "London" in comm else "New York ORB")
+            dir_str = "BUY" if p.type == 0 else "SELL"
+            risk_usd = abs(p.price_open - p.sl) * p.volume * lcfg.POINT_VALUE if p.sl else 0.0
+            self.tracked_positions[p.ticket] = {
+                "session": sess,
+                "direction": dir_str,
+                "volume": p.volume,
+                "price_open": p.price_open,
+                "sl": p.sl,
+                "tp": p.tp,
+                "risk_usd": risk_usd,
+                "comment": comm,
+                "symbol": p.symbol,
+            }
             if "AsiaMR" in comm:
                 self.trades_today["ASIAN"] = True
             elif "London" in comm:
@@ -229,6 +267,27 @@ class LivePortfolioTrader:
             print(f"   • Jadwal London   : OR {self.today_schedule['LONDON_OR_START'][0]:02d}:{self.today_schedule['LONDON_OR_START'][1]:02d} UTC | Entry {self.today_schedule['LONDON_ENTRY_START'][0]:02d}:{self.today_schedule['LONDON_ENTRY_START'][1]:02d} - {self.today_schedule['LONDON_ENTRY_END'][0]:02d}:{self.today_schedule['LONDON_ENTRY_END'][1]:02d} UTC")
             print(f"   • Jadwal New York : OR {self.today_schedule['NY_OR_START'][0]:02d}:{self.today_schedule['NY_OR_START'][1]:02d} UTC | Entry {self.today_schedule['NY_ENTRY_START'][0]:02d}:{self.today_schedule['NY_ENTRY_START'][1]:02d} - {self.today_schedule['NY_ENTRY_END'][0]:02d}:{self.today_schedule['NY_ENTRY_END'][1]:02d} UTC ({ny_tz})\n")
 
+            # Kirim Daily Heartbeat Telegram 1x sehari jam 00:00 UTC (Option A)
+            if self.last_daily_heartbeat_day != today_date:
+                self.last_daily_heartbeat_day = today_date
+                acc = self.connector.get_account_status()
+                if acc:
+                    ping = 2.5
+                    try:
+                        term = mt5.terminal_info()
+                        if term and hasattr(term, "ping_last"):
+                            ping = float(term.ping_last) / 1000.0
+                    except Exception:
+                        pass
+                    self.telegram.notify_daily_heartbeat(
+                        balance=acc.balance,
+                        equity=acc.equity,
+                        free_margin=acc.free_margin,
+                        server=acc.server,
+                        latency_ms=ping,
+                        next_session="Asian Session (01:00 UTC)"
+                    )
+
     def _tick_cycle(self) -> bool:
         """Siklus evaluasi pasar. Mengembalikan True jika berada dalam jendela aktif."""
         now_utc = datetime.now(timezone.utc)
@@ -254,6 +313,9 @@ class LivePortfolioTrader:
         # 1. KELOLA POSISI AKTIF & PENDING ORDERS OCO
         open_positions = self.connector.get_open_positions(lcfg.MAGIC_NUMBER)
         open_pendings = self.connector.get_open_pending_orders(lcfg.MAGIC_NUMBER)
+
+        # Audit & Notifikasi Telegram (Entry & Exit Tracking - Option A)
+        self._track_and_notify_positions(open_positions)
 
         # OCO Logic: Jika ada posisi yang sudah terisi, batalkan sisa pending order yang belum terisi
         if open_positions and open_pendings:
@@ -303,6 +365,96 @@ class LivePortfolioTrader:
         elif sched.get("NY_ENTRY_START") and sched["NY_ENTRY_START"] <= hm < sched["NY_ENTRY_END"]:
             return f"New York ORB ({sched.get('NY_TZ_NAME', 'UTC')})"
         return "Di Luar Jendela Trading"
+
+    # ─────────────────────────────────────────────────────────────
+    # TELEGRAM AUDIT & NOTIFIKASI POSISI (OPTION A: BALANCED MODE)
+    # ─────────────────────────────────────────────────────────────
+    def _track_and_notify_positions(self, current_open_positions: list):
+        """Pantau posisi baru untuk notifikasi Entry, dan deteksi penutupan untuk notifikasi Exit."""
+        current_tickets = set()
+
+        # 1. Deteksi posisi baru (Entry)
+        for p in current_open_positions:
+            ticket = p.ticket
+            current_tickets.add(ticket)
+            if ticket not in self.tracked_positions:
+                comm = p.comment or ""
+                sess = "Asia MR" if "Asia" in comm else ("London ORB" if "London" in comm else "New York ORB")
+                dir_str = "BUY" if p.type == mt5.ORDER_TYPE_BUY else "SELL"
+                risk_usd = abs(p.price_open - p.sl) * p.volume * lcfg.POINT_VALUE if p.sl else 0.0
+
+                self.tracked_positions[ticket] = {
+                    "session": sess,
+                    "direction": dir_str,
+                    "volume": p.volume,
+                    "price_open": p.price_open,
+                    "sl": p.sl,
+                    "tp": p.tp,
+                    "risk_usd": risk_usd,
+                    "comment": comm,
+                    "symbol": p.symbol,
+                }
+
+                # Kirim notifikasi Telegram saat posisi terisi (Entry)
+                self.telegram.notify_entry(
+                    session=sess,
+                    direction=dir_str,
+                    volume=p.volume,
+                    price=p.price_open,
+                    sl=p.sl,
+                    tp=p.tp,
+                    risk_usd=risk_usd,
+                    ticket=ticket,
+                    symbol=p.symbol,
+                )
+
+        # 2. Deteksi posisi yang baru saja ditutup (Exit)
+        closed_tickets = [t for t in list(self.tracked_positions.keys()) if t not in current_tickets]
+        for ticket in closed_tickets:
+            info = self.tracked_positions[ticket]
+            deals = mt5.history_deals_get(position=ticket)
+            exit_price = info["price_open"]
+            pnl_usd = 0.0
+            reason = "Position Closed"
+
+            if deals:
+                exit_deals = [d for d in deals if d.entry == 1]
+                if exit_deals:
+                    last_deal = exit_deals[-1]
+                    exit_price = last_deal.price
+                    pnl_usd = last_deal.profit
+                    deal_comm = (last_deal.comment or "").lower()
+                    if "[tp" in deal_comm or "tp" in deal_comm:
+                        reason = "Target Hit (TP)"
+                    elif "[sl" in deal_comm or "sl" in deal_comm:
+                        reason = "Stop Loss (SL)"
+                    elif "cutoff" in deal_comm:
+                        reason = f"Session Cutoff ({last_deal.comment})"
+                    elif "z-neutral" in deal_comm:
+                        reason = "Z-Neutral Mean Reversion"
+                    else:
+                        reason = last_deal.comment or "Position Closed"
+
+            r_mult = (pnl_usd / info["risk_usd"]) if info["risk_usd"] > 0 else 0.0
+            acc = self.connector.get_account_status()
+            curr_bal = acc.balance if acc else 0.0
+
+            # Kirim notifikasi Telegram saat posisi selesai (Exit)
+            self.telegram.notify_exit(
+                session=info["session"],
+                direction=info["direction"],
+                volume=info["volume"],
+                open_price=info["price_open"],
+                close_price=exit_price,
+                pnl_usd=pnl_usd,
+                r_multiple=r_mult,
+                reason=reason,
+                ticket=ticket,
+                balance=curr_bal,
+                symbol=info.get("symbol", lcfg.SYMBOL),
+            )
+
+            del self.tracked_positions[ticket]
 
     # ─────────────────────────────────────────────────────────────
     # OCO (ONE-CANCELS-THE-OTHER) HANDLER (Point #1 Audit)
