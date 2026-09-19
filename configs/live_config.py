@@ -135,6 +135,7 @@ NY_OR_END               = (13, 45)                 # 13:45 UTC (Pembentukan Box 
 NY_ENTRY_START          = (13, 45)                 # 13:45 UTC
 NY_ENTRY_END            = (16, 30)                 # 16:30 UTC
 NY_CUTOFF_TIME          = (16, 25)                 # 16:25 UTC
+NY_TARGET_RR            = 2.0                      # Target Reward:Risk 2.0R untuk New York ORB
 NY_EXPANSION            = 1.5                      # Syarat Prior TR ekspansi > 1.5x SMA20
 
 # ─────────────────────────────────────────────

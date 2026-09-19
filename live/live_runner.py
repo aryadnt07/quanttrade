@@ -679,7 +679,7 @@ class LivePortfolioTrader:
         tr_series = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
         # Candle M5 yang sudah tutup sempurna adalah iloc[-2] (karena iloc[-1] adalah bar berjalan)
         prior_tr = tr_series.iloc[-2]
-        prior_tr_sma20 = tr_series.iloc[:-2].rolling(20).mean().iloc[-1]
+        prior_tr_sma20 = tr_series.iloc[:-1].rolling(20).mean().iloc[-1]
 
         if pd.isna(prior_tr_sma20) or prior_tr_sma20 <= 0 or prior_tr <= lcfg.LONDON_EXPANSION * prior_tr_sma20:
             return
@@ -784,7 +784,7 @@ class LivePortfolioTrader:
         tr_series = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
         # Candle M5 yang sudah tutup sempurna adalah iloc[-2] (karena iloc[-1] adalah bar berjalan)
         prior_tr = tr_series.iloc[-2]
-        prior_tr_sma20 = tr_series.iloc[:-2].rolling(20).mean().iloc[-1]
+        prior_tr_sma20 = tr_series.iloc[:-1].rolling(20).mean().iloc[-1]
 
         if pd.isna(prior_tr_sma20) or prior_tr_sma20 <= 0 or prior_tr <= lcfg.NY_EXPANSION * prior_tr_sma20:
             return
