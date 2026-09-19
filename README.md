@@ -97,10 +97,6 @@ quanttrade/
 ├── main_london.py                        # Backward-compatible London ORB runner
 ├── main_ny.py                            # Backward-compatible NY ORB runner
 ├── main_asia.py                          # Backward-compatible Asian MR runner
-├── config.py                             # Backward-compatible Asian config shim
-├── london_config.py                      # Backward-compatible London config shim
-├── ny_config.py                          # Backward-compatible NY config shim
-├── portfolio_config.py                   # Backward-compatible Portfolio config shim
 ├── requirements.txt                      # Project dependencies
 └── README.md
 ```
