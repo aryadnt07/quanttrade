@@ -50,10 +50,14 @@ desktop.ini
 scratch/
 *.tmp
 *.log
-!portfolio_log.txt
 
-# Large Dataset Files (>100MB GitHub limit)
-data/*m1*.csv
+# Historical Datasets (Ignored in Git, kept locally)
+data/*
+!data/.gitkeep
+
+# Generated Outputs & Dashboards (Ignored in Git, kept locally)
+output/*
+!output/.gitkeep
 
 # Environment & Credentials
 .env
