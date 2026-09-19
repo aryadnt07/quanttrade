@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0\.."
 title QuantTrade - MT5 Connection Diagnostic
 color 0b
 echo ================================================================

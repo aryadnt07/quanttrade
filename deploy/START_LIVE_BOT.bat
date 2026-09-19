@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0\.."
 title QuantTrade - Institutional Live Bot (24/7 Engine)
 color 0a
 echo ================================================================

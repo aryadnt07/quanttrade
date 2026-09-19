@@ -1,4 +1,5 @@
 @echo off
+cd /d "%~dp0\.."
 title QuantTrade - 1-Click Production Auto-Updater
 color 0e
 echo ================================================================
@@ -24,4 +25,4 @@ echo [4/4] Memulai ulang bot secara otomatis...
 echo.
 echo [✓] Update sukses! Menyalakan kembali Live Trading Bot...
 timeout /t 2 >nul
-start "QuantTrade - Institutional Live Bot (24/7 Engine)" cmd /k "START_LIVE_BOT.bat"
+start "QuantTrade - Institutional Live Bot (24/7 Engine)" cmd /k "%~dp0START_LIVE_BOT.bat"

@@ -52,15 +52,15 @@ MAGIC_NUMBER     = 888001
 
 ## 3. Menjalankan Bot di VPS (1-Click)
 
-Di dalam folder proyek (atau bisa Anda buatkan shortcut-nya di Desktop VPS), Anda memiliki 3 file otomasi:
+Di dalam folder `deploy/` (atau bisa Anda buatkan shortcut-nya ke Desktop VPS), Anda memiliki 3 file otomasi:
 
-### A. Cek Koneksi Broker (`CHECK_CONNECTION.bat`)
-* Klik 2x file `CHECK_CONNECTION.bat`.
+### A. Cek Koneksi Broker (`deploy/CHECK_CONNECTION.bat`)
+* Klik 2x file `deploy/CHECK_CONNECTION.bat`.
 * Sistem akan memverifikasi koneksi MT5, saldo akun, spread XAU/USD live, dan izin AlgoTrading.
 * Jika muncul `[✓] KONEKSI 100% SIAP UNTUK ALGO TRADING LIVE!`, berarti sistem siap.
 
-### B. Menjalankan Bot 24/7 (`START_LIVE_BOT.bat`)
-* Klik 2x file `START_LIVE_BOT.bat`.
+### B. Menjalankan Bot 24/7 (`deploy/START_LIVE_BOT.bat`)
+* Klik 2x file `deploy/START_LIVE_BOT.bat`.
 * Bot akan langsung aktif dan otomatis memantau 3 sesi pasar (Asia 01:00 UTC, London 08:15 UTC, NY 13:45 UTC).
 * **Tips RDP**: Anda bisa menutup (*minimize* / *close*) jendela Remote Desktop (RDP) kapan saja. Bot akan tetap berjalan di background VPS!
 
@@ -78,7 +78,7 @@ Ketika Anda melakukan perbaikan, optimasi formula, atau perubahan strategi di la
    ```
 
 2. **Di VPS**:
-   * Cukup **klik 2x file `UPDATE_LIVE_BOT.bat`**.
+   * Cukup **klik 2x file `deploy/UPDATE_LIVE_BOT.bat`**.
    * File ini secara otomatis akan:
      1. Menutup proses bot yang lama dengan aman (*graceful stop*).
      2. Mengambil kode terbaru via `git pull origin main`.

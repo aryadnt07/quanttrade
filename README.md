@@ -81,6 +81,10 @@ quanttrade/
 │   ├── mt5_connector.py                  # Low-latency MT5 bridge & order management
 │   ├── test_connection.py                # Live connection health-check diagnostic
 │   └── live_config.py                    # Backward-compatible config shim
+├── deploy/                               # Windows VPS 1-Click Automation Scripts
+│   ├── CHECK_CONNECTION.bat              # 1-Click MT5 connection health check
+│   ├── START_LIVE_BOT.bat                # 1-Click 24/7 live trading runner
+│   └── UPDATE_LIVE_BOT.bat               # 1-Click graceful git pull & auto-restart
 ├── scripts/                              # Dedicated Automation & Stress Test Runners
 │   ├── run_monte_carlo.py                # Monte Carlo stress test CLI runner
 │   ├── run_walk_forward.py               # Walk-Forward OOS CLI runner
