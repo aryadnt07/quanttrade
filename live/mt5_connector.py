@@ -9,6 +9,7 @@ dan manajemen error broker.
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
 import datetime
+import concurrent.futures
 import numpy as np
 import pandas as pd
 import MetaTrader5 as mt5
@@ -63,6 +64,7 @@ class MT5Connector:
 
     def __init__(self):
         self.is_connected = False
+        self._cached_broker_offset_sec: Optional[int] = None
 
     def connect(self) -> bool:
         """Inisialisasi koneksi ke terminal MT5 lokal."""
@@ -112,6 +114,45 @@ class MT5Connector:
         mt5.symbol_select(symbol, True)
         return mt5.symbol_info(symbol)
 
+    def get_broker_server_utc_offset_seconds(self) -> int:
+        """
+        Hitung selisih detik antara server broker MT5 dengan UTC (Point P0-003 Audit).
+        
+        Prioritas:
+        1. Konfigurasi manual BROKER_SERVER_OFFSET_HOURS jika tidak 999.
+        2. Auto-detect saat market buka via perbandingan tick.time dengan host UTC timestamp.
+        3. Fallback cerdas: 0 jika Exness (GMT+0), atau 0 sebagai default aman.
+        """
+        configured_offset = getattr(lcfg, "BROKER_SERVER_OFFSET_HOURS", 999)
+        if configured_offset != 999:
+            return configured_offset * 3600
+
+        if self._cached_broker_offset_sec is not None:
+            return self._cached_broker_offset_sec
+
+        try:
+            tick = mt5.symbol_info_tick(lcfg.SYMBOL)
+            if tick:
+                now_utc_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
+                age = abs(now_utc_ts - tick.time)
+                # Jika tick segar (< 300s, market aktif buka)
+                if age < 300:
+                    diff_sec = tick.time - now_utc_ts
+                    offset_hours = round(diff_sec / 3600.0)
+                    self._cached_broker_offset_sec = offset_hours * 3600
+                    return self._cached_broker_offset_sec
+        except Exception:
+            pass
+
+        # Fallback deteksi broker
+        acc = self.get_account_status()
+        if acc and "exness" in acc.server.lower():
+            self._cached_broker_offset_sec = 0
+            return 0
+
+        self._cached_broker_offset_sec = 0
+        return 0
+
     def get_tick(self, symbol: str = lcfg.SYMBOL) -> Optional[Dict[str, float]]:
         """Ambil bid, ask, dan spread terkini."""
         if not self.is_connected and not self.connect():
@@ -131,7 +172,7 @@ class MT5Connector:
         }
 
     def get_live_rates(self, symbol: str = lcfg.SYMBOL, timeframe=mt5.TIMEFRAME_M5, count: int = 200) -> Optional[pd.DataFrame]:
-        """Ambil candle terkini dari MT5 dan kembalikan sebagai DataFrame standar UTC."""
+        """Ambil candle terkini dari MT5 dan kembalikan sebagai DataFrame standar UTC (P0-003)."""
         if not self.is_connected and not self.connect():
             return None
 
@@ -141,12 +182,30 @@ class MT5Connector:
             return None
 
         df = pd.DataFrame(rates)
-        df["datetime"] = pd.to_datetime(df["time"], unit="s", utc=True)
+        # Selaraskan timezone server broker ke UTC murni
+        offset_sec = self.get_broker_server_utc_offset_seconds()
+        df["datetime"] = pd.to_datetime(df["time"] - offset_sec, unit="s", utc=True)
         df.rename(columns={"tick_volume": "volume"}, inplace=True)
         df = df[["datetime", "open", "high", "low", "close", "volume"]].copy()
         df.sort_values("datetime", inplace=True)
         df.reset_index(drop=True, inplace=True)
         return df
+
+    def _safe_order_send(self, request: dict, timeout_sec: Optional[float] = None) -> Any:
+        """
+        Kirim order_send ke MT5 dengan timeout guard via ThreadPoolExecutor.
+        Mencegah bot membeku (freeze) jika IPC MT5 hang atau tidak merespons (Point P0-004 Audit).
+        """
+        if timeout_sec is None:
+            timeout_sec = getattr(lcfg, "ORDER_TIMEOUT_SEC", 10.0)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(mt5.order_send, request)
+            try:
+                return future.result(timeout=timeout_sec)
+            except concurrent.futures.TimeoutError:
+                print(f"[💥 IPC TIMEOUT] mt5.order_send() melampaui batas waktu {timeout_sec}s! Mencegah bot freeze.")
+                return None
 
     def get_open_positions(self, magic: int = lcfg.MAGIC_NUMBER) -> List[Any]:
         """Ambil daftar posisi aktif yang dibuka oleh bot."""
@@ -253,7 +312,7 @@ class MT5Connector:
             print(f"[DRY RUN] Market Order Simulated: {direction} {volume} lots @ {price} | SL: {sl} | TP: {tp}")
             return OrderResult(True, 10009, 999999, price, volume, "Dry run simulated")
 
-        result = mt5.order_send(request)
+        result = self._safe_order_send(request)
         if result is None:
             err = mt5.last_error()
             return OrderResult(False, -4, 0, 0.0, 0.0, f"Order send failed: {err}")
@@ -307,7 +366,7 @@ class MT5Connector:
             print(f"[DRY RUN] Pending Order Simulated: {direction} {volume} lots @ {order_price} | SL: {sl} | TP: {tp}")
             return OrderResult(True, 10009, 888888, order_price, volume, "Dry run pending simulated")
 
-        result = mt5.order_send(request)
+        result = self._safe_order_send(request)
         if result is None:
             err = mt5.last_error()
             return OrderResult(False, -4, 0, 0.0, 0.0, f"Pending order send failed: {err}")
@@ -331,7 +390,7 @@ class MT5Connector:
             "action": mt5.TRADE_ACTION_REMOVE,
             "order": order_id
         }
-        result = mt5.order_send(request)
+        result = self._safe_order_send(request)
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
             ret = result.retcode if result else -6
             desc = translate_retcode(ret)
@@ -380,7 +439,7 @@ class MT5Connector:
             print(f"[DRY RUN] Closed Ticket {ticket} @ {close_price}")
             return OrderResult(True, 10009, ticket, close_price, pos.volume, "Dry run close")
 
-        result = mt5.order_send(request)
+        result = self._safe_order_send(request)
         if result is None or result.retcode != mt5.TRADE_RETCODE_DONE:
             ret = result.retcode if result else -6
             desc = translate_retcode(ret)

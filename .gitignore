@@ -50,6 +50,8 @@ desktop.ini
 scratch/
 *.tmp
 *.log
+bot.lock
+
 
 # Historical Datasets (Ignored in Git, kept locally)
 data/*

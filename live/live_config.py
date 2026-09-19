@@ -6,4 +6,8 @@ File ini me-reexport seluruh variabel konfigurasi agar skrip yang memanggil
 `from live import live_config` tetap berjalan 100% kompatibel tanpa modifikasi.
 """
 
-from configs.live_config import *
+import sys
+import configs.live_config
+
+# Alias module object in sys.modules to ensure singleton identity
+sys.modules[__name__] = configs.live_config

@@ -245,13 +245,19 @@ def run_live_system_check() -> bool:
     risk_ny_usd = curr_balance * lcfg.NY_RISK_PCT
     max_chase = getattr(lcfg, "MAX_CHASE_USD", 0.80)
     max_retries = getattr(lcfg, "MAX_SESSION_RETRIES", 3)
+    max_daily_loss = getattr(lcfg, "MAX_DAILY_LOSS_PCT", 0.05)
+    order_timeout = getattr(lcfg, "ORDER_TIMEOUT_SEC", 10.0)
+    offset_sec = connector.get_broker_server_utc_offset_seconds()
 
     print(f"      - Alokasi Risiko Asia   : {lcfg.ASIAN_RISK_PCT*100:.1f}% (${risk_asia_usd:,.2f} USD)")
     print(f"      - Alokasi Risiko London : {lcfg.LONDON_RISK_PCT*100:.1f}% (${risk_lon_usd:,.2f} USD)")
     print(f"      - Alokasi Risiko NY     : {lcfg.NY_RISK_PCT*100:.1f}% (${risk_ny_usd:,.2f} USD)")
+    print(f"      - Daily Loss Limit (CB) : {max_daily_loss*100:.1f}% max portfolio drawdown")
     print(f"      - Slippage Max Tolerance: {lcfg.SLIPPAGE_POINTS} points ($0.30)")
     print(f"      - Anti-Chasing Ceiling  : ${max_chase:.2f} USD (Batas kejar harga)")
     print(f"      - Anti-Spam Max Retry   : {max_retries} kali (Mencegah requote spam)")
+    print(f"      - IPC Order Timeout     : {order_timeout:.1f}s (Anti-freeze guard)")
+    print(f"      - Broker Server Offset  : {offset_sec//3600:+d}h UTC (Dynamic auto-detection)")
     print("      [✓] PASS: Batasan risiko institusional & safety gates terkonfigurasi aktif.")
 
     # ─────────────────────────────────────────────────────────────

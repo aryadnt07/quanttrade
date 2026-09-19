@@ -52,6 +52,15 @@ def _get_env_int(key: str, default: int) -> int:
     except ValueError:
         return default
 
+def _get_env_float(key: str, default: float) -> float:
+    val = os.getenv(key)
+    if val is None or not val.strip():
+        return default
+    try:
+        return float(val.strip())
+    except ValueError:
+        return default
+
 def _get_env_str(key: str, default: str) -> str:
     val = os.getenv(key)
     if val is None or not val.strip():
@@ -156,5 +165,20 @@ LOG_LEVEL_CONSOLE       = _get_env_str("LOG_LEVEL_CONSOLE", "INFO")
 LOG_LEVEL_FILE          = _get_env_str("LOG_LEVEL_FILE", "DEBUG")
 TRADE_JOURNAL_FILE      = os.path.join(LOG_DIR, "live_trade_journal.csv")
 DISABLE_QUICK_EDIT      = _get_env_bool("DISABLE_QUICK_EDIT", True)
+
+# ─────────────────────────────────────────────
+# 10. INSTITUTIONAL RISK & CONCURRENCY GUARDS
+# ─────────────────────────────────────────────
+ROOT_DIR                = str(Path(__file__).resolve().parent.parent)
+PID_LOCK_FILE           = os.path.join(ROOT_DIR, "bot.lock")
+ORDER_TIMEOUT_SEC       = _get_env_float("ORDER_TIMEOUT_SEC", 10.0)
+MAX_DAILY_LOSS_PCT      = _get_env_float("MAX_DAILY_LOSS_PCT", 0.05)   # 5.0% max daily portfolio drawdown
+BROKER_SERVER_OFFSET_HOURS = _get_env_int("BROKER_SERVER_OFFSET_HOURS", 999) # 999 = auto-detect
+
+# Asia Mean Reversion Exit Parameters (100% Parity dengan asia_config.py)
+ASIA_Z_EXIT_THRESHOLD   = 0.5                      # TP threshold: [-0.5, 0.5] (Backtest parity)
+ASIA_Z_HARD_CUT         = 3.2                      # Emergency hard stop jika |Z| >= 3.2
+ASIA_MAX_DURATION_MIN   = 60                       # Time-stop 60 menit
+
 
 

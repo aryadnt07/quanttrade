@@ -18,6 +18,7 @@ Arsitektur Kepatuhan Audit Red Team (audit_report_live_connector.md):
 import os
 import sys
 import time
+import atexit
 from datetime import datetime, timezone, date
 from zoneinfo import ZoneInfo
 from typing import Optional, Dict, Any, List
@@ -43,6 +44,29 @@ from engine.asia.signals import (
     check_entry_signal as check_asian_entry,
     Direction as AsianDirection,
 )
+
+
+def is_process_running(pid: int) -> bool:
+    """Cek apakah proses dengan PID tertentu masih aktif berjalan di OS (Point P0-002 Audit)."""
+    if pid <= 0:
+        return False
+    if sys.platform == "win32":
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        SYNCHRONIZE = 0x00100000
+        PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+        handle = kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION | SYNCHRONIZE, False, pid)
+        if handle:
+            res = kernel32.WaitForSingleObject(handle, 0)
+            kernel32.CloseHandle(handle)
+            return res == 258  # 258 = STILL_ACTIVE (WAIT_TIMEOUT)
+        return False
+    else:
+        try:
+            os.kill(pid, 0)
+            return True
+        except OSError:
+            return False
 
 
 class SessionScheduleManager:
@@ -116,6 +140,18 @@ class LivePortfolioTrader:
             "NY": False,
         }
 
+        # In-Flight Order Mutex Lock (Point P0-001 Audit)
+        self._order_in_flight: Dict[str, bool] = {
+            "ASIAN": False,
+            "LONDON": False,
+            "NY": False,
+        }
+
+        # Daily Loss Circuit Breaker (Point P1-003 Audit)
+        self.starting_daily_equity: Optional[float] = None
+        self.daily_circuit_breaker_tripped: bool = False
+        self._lock_acquired: bool = False
+
         # Tracker retry per sesi (Point #2 Audit: Anti-Requote Spam)
         self.retry_counts = {
             "ASIAN": 0,
@@ -140,8 +176,68 @@ class LivePortfolioTrader:
 
         self.last_heartbeat_time = 0.0
 
+    def _acquire_pid_lock(self) -> bool:
+        """
+        Kunci instance bot dengan PID lockfile (Point P0-002 Audit).
+        Mencegah dua instance bot berjalan bersamaan di VPS.
+        """
+        lock_file = getattr(lcfg, "PID_LOCK_FILE", "bot.lock")
+        current_pid = os.getpid()
+
+        if os.path.exists(lock_file):
+            try:
+                with open(lock_file, "r") as f:
+                    content = f.read().strip()
+                if content:
+                    existing_pid = int(content)
+                    if is_process_running(existing_pid) and existing_pid != current_pid:
+                        err_msg = (
+                            "\n" + "!" * 76 + "\n"
+                            f"  [💥 DUAL INSTANCE DETECTED] Instance bot lain sedang aktif dengan PID {existing_pid}!\n"
+                            f"  Dua bot dilarang berjalan bersamaan untuk mencegah duplicate orders (P0-002).\n"
+                            f"  Jika ingin merestart, hentikan proses PID {existing_pid} terlebih dahulu.\n"
+                            "!" * 76 + "\n"
+                        )
+                        print(err_msg)
+                        self.logger.critical(f"[💥 DUAL INSTANCE BLOCKED] Bot lain dengan PID {existing_pid} sedang aktif.")
+                        return False
+                    else:
+                        self.logger.warning(f"[⚠️ STALE LOCK DETECTED] Lockfile lama ditemukan (PID {existing_pid} tidak aktif). Menimpa lockfile...")
+            except (ValueError, IOError) as e:
+                self.logger.warning(f"[⚠️ LOCKFILE READ ERROR] Gagal membaca lockfile ({e}). Menimpa lockfile...")
+
+        try:
+            with open(lock_file, "w") as f:
+                f.write(str(current_pid))
+            self._lock_acquired = True
+            self.logger.info(f"[🔒 PID LOCK ACQUIRED] Bot instance terkunci dengan PID {current_pid} ({lock_file}).")
+            return True
+        except Exception as e:
+            self.logger.error(f"[X] Gagal membuat PID lockfile: {e}")
+            return True
+
+    def _release_pid_lock(self):
+        """Hapus lockfile saat bot berhenti dengan aman."""
+        if getattr(self, "_lock_acquired", False):
+            lock_file = getattr(lcfg, "PID_LOCK_FILE", "bot.lock")
+            try:
+                if os.path.exists(lock_file):
+                    with open(lock_file, "r") as f:
+                        content = f.read().strip()
+                    if content and int(content) == os.getpid():
+                        os.remove(lock_file)
+                        self.logger.info(f"[🔓 PID LOCK RELEASED] Lockfile {lock_file} berhasil dibersihkan.")
+            except Exception as e:
+                self.logger.warning(f"[!] Gagal membersihkan lockfile: {e}")
+            self._lock_acquired = False
+
     def start(self):
         """Memulai loop eksekusi live bot."""
+        # 1. Acquire PID single-instance lockfile (Point P0-002 Audit)
+        if not self._acquire_pid_lock():
+            return
+        atexit.register(self._release_pid_lock)
+
         # Proteksi QuickEdit Mode di Windows agar terminal tidak freeze saat diklik
         if getattr(lcfg, "DISABLE_QUICK_EDIT", True):
             if disable_quick_edit_mode():
@@ -170,6 +266,7 @@ class LivePortfolioTrader:
 
         acc = self.connector.get_account_status()
         if acc:
+            self.starting_daily_equity = acc.equity
             self.logger.info(f"[✓] Terhubung ke Akun : {acc.login} ({acc.server})")
             self.logger.info(f"    Saldo Akun        : ${acc.balance:,.2f} {acc.currency}")
             self.logger.info(f"    Ekuitas Akun      : ${acc.equity:,.2f} {acc.currency}")
@@ -231,6 +328,7 @@ class LivePortfolioTrader:
             raise e
         finally:
             self.connector.shutdown()
+            self._release_pid_lock()
             self.logger.info("[✓] Koneksi MT5 ditutup dengan aman. Bot berhenti.")
 
     def _sync_state_from_broker(self):
@@ -289,6 +387,9 @@ class LivePortfolioTrader:
             # Startup awal: inisialisasi tanggal tanpa me-reset state yang baru di-sync
             self.current_trading_day = today_date
             self.today_schedule = SessionScheduleManager.get_today_schedule(today_date)
+            acc = self.connector.get_account_status()
+            if acc:
+                self.starting_daily_equity = acc.equity
             return
 
         if self.current_trading_day != today_date:
@@ -302,6 +403,10 @@ class LivePortfolioTrader:
             self.ny_or_low = None
             self.ny_or_range = None
             self.pending_orders = {"LONDON": [], "NY": []}
+            self.daily_circuit_breaker_tripped = False
+            acc = self.connector.get_account_status()
+            if acc:
+                self.starting_daily_equity = acc.equity
 
             # Hitung jadwal sesi hari ini dengan DST dinamis (Point #4 Audit)
             self.today_schedule = SessionScheduleManager.get_today_schedule(today_date)
@@ -407,10 +512,32 @@ class LivePortfolioTrader:
         if open_positions:
             self._manage_open_positions(open_positions, df_m5, now_utc)
 
+        # Cek Daily Loss Circuit Breaker (Point P1-003 Audit)
+        acc = self.connector.get_account_status()
+        if acc:
+            if self.starting_daily_equity is None or self.starting_daily_equity <= 0:
+                self.starting_daily_equity = acc.equity
+
+            daily_drawdown_pct = (self.starting_daily_equity - acc.equity) / self.starting_daily_equity
+            max_daily_loss = getattr(lcfg, "MAX_DAILY_LOSS_PCT", 0.05)
+            if daily_drawdown_pct >= max_daily_loss:
+                if not self.daily_circuit_breaker_tripped:
+                    self.daily_circuit_breaker_tripped = True
+                    msg = (
+                        f"[🛑 DAILY CIRCUIT BREAKER ACTIVATED] Daily Drawdown {daily_drawdown_pct*100:.2f}% "
+                        f">= limit {max_daily_loss*100:.1f}%! "
+                        f"Starting Equity: ${self.starting_daily_equity:,.2f} | Current: ${acc.equity:,.2f}. "
+                        f"Trading dihentikan untuk sisa hari ini."
+                    )
+                    self.logger.critical(msg)
+                    self.telegram.notify_critical_alert("Daily Circuit Breaker", msg)
+                    self.trades_today["ASIAN"] = True
+                    self.trades_today["LONDON"] = True
+                    self.trades_today["NY"] = True
+
         # 2. EVALUASI SINYAL ENTRI BARU
         is_in_active_window = self._is_in_any_active_window(now_utc)
-        if len(open_positions) < lcfg.MAX_OPEN_TRADES:
-            acc = self.connector.get_account_status()
+        if len(open_positions) < lcfg.MAX_OPEN_TRADES and not self.daily_circuit_breaker_tripped:
             equity = acc.equity if acc else 1000.0
 
             # Evaluasi Modul 1: Asia Mean Reversion
@@ -596,7 +723,7 @@ class LivePortfolioTrader:
     # MODUL 1: ASIAN MEAN REVERSION (01:00 - 04:30 UTC)
     # ─────────────────────────────────────────────────────────────
     def _evaluate_asian_mr(self, df_m5: pd.DataFrame, now_utc: datetime, tick: dict, equity: float):
-        if not lcfg.ENABLE_ASIAN_MR or self.trades_today["ASIAN"]:
+        if not lcfg.ENABLE_ASIAN_MR or self.trades_today["ASIAN"] or self._order_in_flight["ASIAN"]:
             return
 
         hm = (now_utc.hour, now_utc.minute)
@@ -627,20 +754,24 @@ class LivePortfolioTrader:
         dir_str = "BUY" if sig.direction == AsianDirection.LONG else "SELL"
         self.logger.info(f"\n[🚀 SINYAL ASIA MR] {dir_str} {lot} Lot XAU/USD | Entry: {sig.entry_price:.2f} | SL: {sig.stop_loss:.2f} | TP: {sig.take_profit:.2f}")
 
-        res = self.connector.open_market_order(
-            direction=dir_str,
-            volume=lot,
-            sl=sig.stop_loss,
-            tp=sig.take_profit,
-            comment="AsiaMR-FLG"
-        )
-        self._handle_order_result("ASIAN", res)
+        self._order_in_flight["ASIAN"] = True
+        try:
+            res = self.connector.open_market_order(
+                direction=dir_str,
+                volume=lot,
+                sl=sig.stop_loss,
+                tp=sig.take_profit,
+                comment="AsiaMR-FLG"
+            )
+            self._handle_order_result("ASIAN", res)
+        finally:
+            self._order_in_flight["ASIAN"] = False
 
     # ─────────────────────────────────────────────────────────────
     # MODUL 2: LONDON PIT ORB (08:15 - 11:30 UTC)
     # ─────────────────────────────────────────────────────────────
     def _evaluate_london_orb(self, df_m5: pd.DataFrame, now_utc: datetime, tick: dict, equity: float, open_pendings: list):
-        if not lcfg.ENABLE_LONDON_ORB or self.trades_today["LONDON"]:
+        if not lcfg.ENABLE_LONDON_ORB or self.trades_today["LONDON"] or self._order_in_flight["LONDON"]:
             return
 
         hm = (now_utc.hour, now_utc.minute)
@@ -673,22 +804,26 @@ class LivePortfolioTrader:
         # MODE B: PENDING STOP ORDER OCO (Point #1 Audit)
         if lcfg.BREAKOUT_EXECUTION_MODE == "PENDING_STOP_OCO":
             if not self.pending_orders["LONDON"] and not self.trades_today["LONDON"]:
-                self.logger.info(f"\n[📦 MENANAM STOP ORDER LONDON] Memasang Buy Stop & Sell Stop di server MT5...")
-                # Buy Stop di or_high
-                bs_sl = self.london_or_low
-                bs_tp = self.london_or_high + risk * lcfg.LONDON_TARGET_RR
-                res_b = self.connector.place_pending_order("BUY_STOP", lot, self.london_or_high, bs_sl, bs_tp, "London-BuyStop")
+                self._order_in_flight["LONDON"] = True
+                try:
+                    self.logger.info(f"\n[📦 MENANAM STOP ORDER LONDON] Memasang Buy Stop & Sell Stop di server MT5...")
+                    # Buy Stop di or_high
+                    bs_sl = self.london_or_low
+                    bs_tp = self.london_or_high + risk * lcfg.LONDON_TARGET_RR
+                    res_b = self.connector.place_pending_order("BUY_STOP", lot, self.london_or_high, bs_sl, bs_tp, "London-BuyStop")
 
-                # Sell Stop di or_low
-                ss_sl = self.london_or_high
-                ss_tp = self.london_or_low - risk * lcfg.LONDON_TARGET_RR
-                res_s = self.connector.place_pending_order("SELL_STOP", lot, self.london_or_low, ss_sl, ss_tp, "London-SellStop")
+                    # Sell Stop di or_low
+                    ss_sl = self.london_or_high
+                    ss_tp = self.london_or_low - risk * lcfg.LONDON_TARGET_RR
+                    res_s = self.connector.place_pending_order("SELL_STOP", lot, self.london_or_low, ss_sl, ss_tp, "London-SellStop")
 
-                if res_b.success and res_s.success:
-                    self.pending_orders["LONDON"] = [res_b.order_id, res_s.order_id]
-                    self.logger.info(f"[✓] BUY STOP (Ticket {res_b.order_id}) & SELL STOP (Ticket {res_s.order_id}) AKTIF DI SERVER BROKER!\n")
-                else:
-                    self._handle_order_result("LONDON", res_b if not res_b.success else res_s)
+                    if res_b.success and res_s.success:
+                        self.pending_orders["LONDON"] = [res_b.order_id, res_s.order_id]
+                        self.logger.info(f"[✓] BUY STOP (Ticket {res_b.order_id}) & SELL STOP (Ticket {res_s.order_id}) AKTIF DI SERVER BROKER!\n")
+                    else:
+                        self._handle_order_result("LONDON", res_b if not res_b.success else res_s)
+                finally:
+                    self._order_in_flight["LONDON"] = False
             return
 
         # MODE A: FAST-TICK BREAKOUT WITH EXPANSION FILTER & ANTI-CHASING (100% Causal)
@@ -721,8 +856,12 @@ class LivePortfolioTrader:
             sl = self.london_or_low
             tp = self.london_or_high + risk * lcfg.LONDON_TARGET_RR
             self.logger.info(f"\n[⚡ BREAKOUT LONDON LONG] Ask {current_ask:.2f} > LOR High {self.london_or_high:.2f} | Lot: {lot} | SL: {sl:.2f} | TP: {tp:.2f}")
-            res = self.connector.open_market_order("BUY", volume=lot, sl=sl, tp=tp, comment="London-ORB-FLG")
-            self._handle_order_result("LONDON", res)
+            self._order_in_flight["LONDON"] = True
+            try:
+                res = self.connector.open_market_order("BUY", volume=lot, sl=sl, tp=tp, comment="London-ORB-FLG")
+                self._handle_order_result("LONDON", res)
+            finally:
+                self._order_in_flight["LONDON"] = False
 
         # Short Breakout
         elif current_bid < self.london_or_low:
@@ -738,14 +877,18 @@ class LivePortfolioTrader:
             sl = self.london_or_high
             tp = self.london_or_low - risk * lcfg.LONDON_TARGET_RR
             self.logger.info(f"\n[⚡ BREAKOUT LONDON SHORT] Bid {current_bid:.2f} < LOR Low {self.london_or_low:.2f} | Lot: {lot} | SL: {sl:.2f} | TP: {tp:.2f}")
-            res = self.connector.open_market_order("SELL", volume=lot, sl=sl, tp=tp, comment="London-ORB-FLG")
-            self._handle_order_result("LONDON", res)
+            self._order_in_flight["LONDON"] = True
+            try:
+                res = self.connector.open_market_order("SELL", volume=lot, sl=sl, tp=tp, comment="London-ORB-FLG")
+                self._handle_order_result("LONDON", res)
+            finally:
+                self._order_in_flight["LONDON"] = False
 
     # ─────────────────────────────────────────────────────────────
     # MODUL 3: NEW YORK ORB (DYNAMIC DST TRACKING)
     # ─────────────────────────────────────────────────────────────
     def _evaluate_ny_orb(self, df_m5: pd.DataFrame, now_utc: datetime, tick: dict, equity: float, open_pendings: list):
-        if not lcfg.ENABLE_NY_ORB or self.trades_today["NY"]:
+        if not lcfg.ENABLE_NY_ORB or self.trades_today["NY"] or self._order_in_flight["NY"]:
             return
 
         hm = (now_utc.hour, now_utc.minute)
@@ -778,22 +921,26 @@ class LivePortfolioTrader:
         # MODE B: PENDING STOP ORDER OCO (Point #1 Audit)
         if lcfg.BREAKOUT_EXECUTION_MODE == "PENDING_STOP_OCO":
             if not self.pending_orders["NY"] and not self.trades_today["NY"]:
-                self.logger.info(f"\n[📦 MENANAM STOP ORDER NY] Memasang Buy Stop & Sell Stop di server MT5...")
-                # Buy Stop di or_high
-                bs_sl = self.ny_or_low
-                bs_tp = self.ny_or_high + risk * lcfg.NY_TARGET_RR
-                res_b = self.connector.place_pending_order("BUY_STOP", lot, self.ny_or_high, bs_sl, bs_tp, "NY-BuyStop")
+                self._order_in_flight["NY"] = True
+                try:
+                    self.logger.info(f"\n[📦 MENANAM STOP ORDER NY] Memasang Buy Stop & Sell Stop di server MT5...")
+                    # Buy Stop di or_high
+                    bs_sl = self.ny_or_low
+                    bs_tp = self.ny_or_high + risk * lcfg.NY_TARGET_RR
+                    res_b = self.connector.place_pending_order("BUY_STOP", lot, self.ny_or_high, bs_sl, bs_tp, "NY-BuyStop")
 
-                # Sell Stop di or_low
-                ss_sl = self.ny_or_high
-                ss_tp = self.ny_or_low - risk * lcfg.NY_TARGET_RR
-                res_s = self.connector.place_pending_order("SELL_STOP", lot, self.ny_or_low, ss_sl, ss_tp, "NY-SellStop")
+                    # Sell Stop di or_low
+                    ss_sl = self.ny_or_high
+                    ss_tp = self.ny_or_low - risk * lcfg.NY_TARGET_RR
+                    res_s = self.connector.place_pending_order("SELL_STOP", lot, self.ny_or_low, ss_sl, ss_tp, "NY-SellStop")
 
-                if res_b.success and res_s.success:
-                    self.pending_orders["NY"] = [res_b.order_id, res_s.order_id]
-                    self.logger.info(f"[✓] BUY STOP (Ticket {res_b.order_id}) & SELL STOP (Ticket {res_s.order_id}) AKTIF DI SERVER BROKER!\n")
-                else:
-                    self._handle_order_result("NY", res_b if not res_b.success else res_s)
+                    if res_b.success and res_s.success:
+                        self.pending_orders["NY"] = [res_b.order_id, res_s.order_id]
+                        self.logger.info(f"[✓] BUY STOP (Ticket {res_b.order_id}) & SELL STOP (Ticket {res_s.order_id}) AKTIF DI SERVER BROKER!\n")
+                    else:
+                        self._handle_order_result("NY", res_b if not res_b.success else res_s)
+                finally:
+                    self._order_in_flight["NY"] = False
             return
 
         # MODE A: FAST-TICK BREAKOUT WITH EXPANSION FILTER & ANTI-CHASING (100% Causal)
@@ -826,8 +973,12 @@ class LivePortfolioTrader:
             sl = self.ny_or_low
             tp = self.ny_or_high + risk * lcfg.NY_TARGET_RR
             self.logger.info(f"\n[⚡ BREAKOUT NY LONG] Ask {current_ask:.2f} > NY High {self.ny_or_high:.2f} | Lot: {lot} | SL: {sl:.2f} | TP: {tp:.2f}")
-            res = self.connector.open_market_order("BUY", volume=lot, sl=sl, tp=tp, comment="NY-ORB-FLG")
-            self._handle_order_result("NY", res)
+            self._order_in_flight["NY"] = True
+            try:
+                res = self.connector.open_market_order("BUY", volume=lot, sl=sl, tp=tp, comment="NY-ORB-FLG")
+                self._handle_order_result("NY", res)
+            finally:
+                self._order_in_flight["NY"] = False
 
         # Short Breakout
         elif current_bid < self.ny_or_low:
@@ -843,14 +994,19 @@ class LivePortfolioTrader:
             sl = self.ny_or_high
             tp = self.ny_or_low - risk * lcfg.NY_TARGET_RR
             self.logger.info(f"\n[⚡ BREAKOUT NY SHORT] Bid {current_bid:.2f} < NY Low {self.ny_or_low:.2f} | Lot: {lot} | SL: {sl:.2f} | TP: {tp:.2f}")
-            res = self.connector.open_market_order("SELL", volume=lot, sl=sl, tp=tp, comment="NY-ORB-FLG")
-            self._handle_order_result("NY", res)
+            self._order_in_flight["NY"] = True
+            try:
+                res = self.connector.open_market_order("SELL", volume=lot, sl=sl, tp=tp, comment="NY-ORB-FLG")
+                self._handle_order_result("NY", res)
+            finally:
+                self._order_in_flight["NY"] = False
 
     # ─────────────────────────────────────────────────────────────
     # REQUOTE & ANTI-SPAM LOCKOUT HANDLER (Point #2 Audit)
     # ─────────────────────────────────────────────────────────────
     def _handle_order_result(self, session: str, res):
         """Kelola hasil pengiriman order dengan proteksi max-retries (Point #2 Audit)."""
+        self._order_in_flight[session] = False
         if res.success:
             self.logger.info(f"[✓] ORDER {session} BERHASIL! Ticket: {res.order_id} @ {res.price}\n")
             self.trades_today[session] = True
@@ -875,7 +1031,7 @@ class LivePortfolioTrader:
     # PENGELOLAAN POSISI AKTIF & SESSION CUTOFFS
     # ─────────────────────────────────────────────────────────────
     def _manage_open_positions(self, positions: list, df_m5: pd.DataFrame, now_utc: datetime):
-        """Kelola kondisi keluar khusus (Z-Score Neutral, Session Cutoff)."""
+        """Kelola kondisi keluar khusus (Z-Score Neutral, Time-Stop 60m, Hard Cut |Z|>=3.2, Session Cutoff)."""
         hm = (now_utc.hour, now_utc.minute)
         sched = self.today_schedule
 
@@ -889,35 +1045,68 @@ class LivePortfolioTrader:
                 # A. Hard Cutoff 06:00 UTC
                 if hm >= sched["ASIAN_CUTOFF"]:
                     self.logger.info(f"[!] Session Cutoff Asia (06:00 UTC) tercapai. Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
-                    self.connector.close_position(ticket, comment="Cutoff-06:00")
+                    res = self.connector.close_position(ticket, comment="Cutoff-06:00")
+                    if not res.success:
+                        self.logger.error(f"[X] Gagal menutup posisi Cutoff Ticket {ticket}: {res.comment}")
                     continue
 
-                # B. Smart Exit Z-score Mean Reversion
+                # Ambil data indikator Asia
                 df_asia = compute_asian_indicators(df_m5)
-                latest_z = df_asia["zscore"].iloc[-2]
+                latest_z = float(df_asia["zscore"].iloc[-2])
                 is_buy = (pos.type == mt5.ORDER_TYPE_BUY)
 
-                if is_buy and latest_z >= -0.2:
-                    self.logger.info(f"[🎯 TP MEAN-REVERSION ASIA] Z-Score netral ({latest_z:.2f} >= -0.2). Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
-                    self.connector.close_position(ticket, comment="TP-Z-Neutral")
+                # B. Time Stop (60 Menit - Point P1-001 Audit)
+                offset_sec = self.connector.get_broker_server_utc_offset_seconds()
+                pos_open_utc_ts = pos.time - offset_sec
+                duration_min = (now_utc.timestamp() - pos_open_utc_ts) / 60.0
+                max_duration = getattr(lcfg, "ASIA_MAX_DURATION_MIN", 60)
+                if duration_min >= max_duration:
+                    self.logger.info(f"[⏱️ TIME-STOP ASIA] Durasi trading {duration_min:.1f}m >= {max_duration}m. Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
+                    res = self.connector.close_position(ticket, comment="TimeStop-60m")
+                    if not res.success:
+                        self.logger.error(f"[X] Gagal menutup posisi TimeStop Ticket {ticket}: {res.comment}")
                     continue
-                elif not is_buy and latest_z <= 0.2:
-                    self.logger.info(f"[🎯 TP MEAN-REVERSION ASIA] Z-Score netral ({latest_z:.2f} <= +0.2). Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
-                    self.connector.close_position(ticket, comment="TP-Z-Neutral")
+
+                # C. Hard Cut (|Z| >= 3.2 - Point P1-001 Audit)
+                z_hard_cut = getattr(lcfg, "ASIA_Z_HARD_CUT", 3.2)
+                if (is_buy and latest_z <= -z_hard_cut) or (not is_buy and latest_z >= z_hard_cut):
+                    self.logger.warning(f"[💥 HARD-CUT ASIA] Z-Score ekstrim ({latest_z:.2f}) melampaui limit {z_hard_cut}. Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
+                    res = self.connector.close_position(ticket, comment="HardCut-Z3.2")
+                    if not res.success:
+                        self.logger.error(f"[X] Gagal menutup posisi HardCut Ticket {ticket}: {res.comment}")
+                    continue
+
+                # D. Smart Exit Z-score Mean Reversion (Parity: [-0.5, 0.5])
+                z_exit_thresh = getattr(lcfg, "ASIA_Z_EXIT_THRESHOLD", 0.5)
+                if is_buy and latest_z >= -z_exit_thresh:
+                    self.logger.info(f"[🎯 TP MEAN-REVERSION ASIA] Z-Score netral ({latest_z:.2f} >= -{z_exit_thresh}). Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
+                    res = self.connector.close_position(ticket, comment="TP-Z-Neutral")
+                    if not res.success:
+                        self.logger.error(f"[X] Gagal menutup posisi TP-Z Ticket {ticket}: {res.comment}")
+                    continue
+                elif not is_buy and latest_z <= z_exit_thresh:
+                    self.logger.info(f"[🎯 TP MEAN-REVERSION ASIA] Z-Score netral ({latest_z:.2f} <= +{z_exit_thresh}). Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
+                    res = self.connector.close_position(ticket, comment="TP-Z-Neutral")
+                    if not res.success:
+                        self.logger.error(f"[X] Gagal menutup posisi TP-Z Ticket {ticket}: {res.comment}")
                     continue
 
             # 2. Kelola Posisi London Pit ORB
             elif "London" in comment:
                 if hm >= sched["LONDON_CUTOFF"]:
                     self.logger.info(f"[!] Session Cutoff London tercapai. Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
-                    self.connector.close_position(ticket, comment="Cutoff-London")
+                    res = self.connector.close_position(ticket, comment="Cutoff-London")
+                    if not res.success:
+                        self.logger.error(f"[X] Gagal menutup posisi Cutoff London Ticket {ticket}: {res.comment}")
                     continue
 
             # 3. Kelola Posisi New York ORB
             elif "NY" in comment:
                 if hm >= sched["NY_CUTOFF"]:
                     self.logger.info(f"[!] Session Cutoff NY tercapai. Menutup Ticket {ticket} (PnL: ${profit:+.2f})...")
-                    self.connector.close_position(ticket, comment="Cutoff-NY")
+                    res = self.connector.close_position(ticket, comment="Cutoff-NY")
+                    if not res.success:
+                        self.logger.error(f"[X] Gagal menutup posisi Cutoff NY Ticket {ticket}: {res.comment}")
                     continue
 
 
