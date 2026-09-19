@@ -59,14 +59,12 @@ def _get_env_str(key: str, default: str) -> str:
     return val.strip()
 
 # ─────────────────────────────────────────────
-# 1. KREDENSIAL AKUN BROKER MT5 (EXNESS / ECN)
+# 1. PARAMETER TERMINAL MT5 & SIMBOL EKSEKUSI
 # ─────────────────────────────────────────────
-ACCOUNT_LOGIN           = _get_env_int("MT5_ACCOUNT_LOGIN", 434215986)
-ACCOUNT_PASSWORD        = _get_env_str("MT5_ACCOUNT_PASSWORD", "")
-ACCOUNT_SERVER          = _get_env_str("MT5_ACCOUNT_SERVER", "Exness-MT5Trial7")
-SYMBOL                  = _get_env_str("MT5_SYMBOL", "XAUUSD")
-MAGIC_NUMBER            = _get_env_int("MT5_MAGIC_NUMBER", 888001)
-SLIPPAGE_POINTS         = _get_env_int("MT5_SLIPPAGE_POINTS", 30)
+# Catatan: Akun login, password, & server dibaca otomatis oleh MT5 IPC dari terminal aktif.
+SYMBOL                  = "XAUUSD"                 # Simbol Gold di MT5
+MAGIC_NUMBER            = 888001                   # ID Unik Order Bot
+SLIPPAGE_POINTS         = 30                       # Toleransi slippage broker (points)
 
 # ─────────────────────────────────────────────
 # 2. MANAJEMEN RISIKO LIVE & ASYMMETRIC SIZING
