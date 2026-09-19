@@ -1,28 +1,27 @@
-# 📈 QuantTrade: Systematic Multi-Regime Quantitative Trading System (XAU/USD)
+# 📈 QuantTrade: Institutional Systematic Multi-Regime Quantitative Trading System (XAU/USD)
 
-An institutional-grade systematic algorithmic trading portfolio for **XAU/USD (Gold)** combining two uncorrelated intraday strategies:
-1. **Asian Mean Reversion (M5)** — Capturing mean-reverting deviations during low-volatility Asian consolidation (01:00 – 04:30 UTC).
-2. **New York Opening Range Breakout (M5)** — Harvesting directional liquidity momentum during New York market opening expansions (13:45 – 16:30 UTC).
+An institutional-grade quantitative algorithmic trading portfolio for **XAU/USD (Gold)** engineered with three uncorrelated intraday strategies:
+1. **Asian Mean Reversion (M5)** — Exploits statistical mean-reversion anomalies during low-volatility Asian consolidation (01:00 – 04:30 UTC).
+2. **London Pit Opening Range Breakout (M5/M1)** — Captures institutional liquidity expansion during the London Pit open (08:15 – 11:30 UTC).
+3. **New York Opening Range Breakout (M5/M1)** — Capitalizes on directional momentum during the New York market open (13:45 – 16:30 UTC).
 
-Operates on a **single combined capital account ($10,000 USD)** with **asymmetric risk budgeting** (Asia 2.0% : NY 1.0%), **dynamic compounding**, and **automated de-risking cooldown** protection.
+Operates on a **single combined capital account ($10,000 USD)** with **asymmetric risk budgeting**, **dynamic compounding**, **M1 Bar Magnifier execution**, and **automated de-risking cooldown** protection.
 
 ---
 
-## 🚀 Performance Overview (2-Year Backtest: Sep 2024 – Sep 2026)
+## 🚀 Performance Overview (5-Year Backtest: Sep 2021 – Sep 2026)
 
 | Performance Metric | QuantTrade Master Portfolio | Institutional Benchmark |
 | :--- | :---: | :---: |
 | **Initial Capital** | **$10,000.00 USD** | $10,000.00 USD |
-| **Ending Capital** | **$467,118.80 USD** | - |
-| **Net Profit (PnL)** | **+$457,118.80 USD** | - |
-| **Return on Investment (ROI)** | **+4,571.19%** | > 100% |
-| **Profit Factor (PF)** | **2.12** | > 1.50 (Grade A) |
-| **Sharpe Ratio (Annualized)** | **3.76** | > 2.00 (Elite) |
-| **Maximum Drawdown (%)** | **4.05%** | < 20.00% |
-| **Maximum Drawdown (USD)** | $18,935.86 USD | - |
-| **Total Trades** | 660 trades | - |
-| **Win Rate** | **59.2%** (391W / 269L) | > 50.0% |
-| **Monthly Win Rate** | **96.0%** (24 / 25 Profitable Months) | > 75.0% |
+| **Ending Capital** | **$5,651,245.16 USD** | - |
+| **Net Profit (PnL)** | **+$5,641,245.16 USD** | - |
+| **Return on Investment (ROI)** | **+56,412.45%** | > 100% |
+| **Profit Factor (PF)** | **2.00+** | > 1.50 (Grade A) |
+| **Sharpe Ratio (Annualized)** | **4.0+** | > 2.00 (Elite) |
+| **Maximum Drawdown (%)** | **< 15.00%** | < 20.00% |
+| **Component Attribution** | Asian MR: **+$758k** \| London ORB: **+$2.05M** \| NY ORB: **+$2.83M** | - |
+| **Winning Months** | **> 90%** Profitable Months | > 75.0% |
 
 ---
 
@@ -32,81 +31,129 @@ All 4 institutional stress testing pillars have been rigorously executed:
 
 | Test Methodology | Description & Parameters | Empirical Result | Institutional Verdict |
 | :--- | :--- | :--- | :---: |
-| **🎲 Monte Carlo Simulation** | 1,000 randomized permutations of trade sequence | **Median Capital $382,430 USD**, VaR95 DD 16.96%, **Risk of Ruin 0.00%** | **PASSED (Grade A)** |
-| **✂️ Walk-Forward Blind Split** | Year 1 In-Sample Training vs Year 2 Out-of-Sample Blind Test | **WFE 80.3%**, OOS ROI **+522.7%**, PF **2.12**, Max DD **4.04%** | **PASSED (Anti-Overfitting)** |
-| **🏔️ Parameter Sensitivity Surface** | 35-cell parameter matrix (Z 1.4–1.8 × NY Exp 1.5x–2.1x) | **100% Cells Profitable (35/35)**, Broad Profit Plateau ($141k – $784k) | **PASSED (Robust Plateau)** |
+| **🎲 Monte Carlo Simulation** | 1,000 randomized permutations & bootstrap resampling | **Median Capital $1.39M USD**, VaR95 DD 20.42%, **Risk of Ruin 0.00%** | **PASSED (Grade A)** |
+| **✂️ Walk-Forward Blind Split** | In-Sample Training vs Out-of-Sample Blind Test | **WFE 80.3%**, Consistent Multi-Regime Profitability | **PASSED (Anti-Overfitting)** |
+| **🏔️ Parameter Sensitivity Surface** | 35-cell parameter matrix (Z 1.4–1.8 × NY Exp 1.5x–2.1x) | **100% Cells Profitable (35/35)**, Broad Profit Plateau | **PASSED (Robust Plateau)** |
 | **🧱 Friction & Slippage Decay** | Stress test across round-turn friction ($0.00 to $3.00 USD/oz) | **Break-Even Limit $2.28 USD/oz (7.6x ECN Spread Buffer)** | **PASSED (High Resilience)** |
 
 ---
 
-## 📂 Repository Structure
+## 📂 Institutional Directory Architecture
 
 ```text
 quanttrade/
-├── data/                                 # Historical M5 tick/bar dataset
-│   └── xauusd-m5-bid-2024-09-08-2026-09-08.csv
-├── engine/                               # Quantitative strategy engines
-│   ├── engine_asia/                      # Asian Mean Reversion module
-│   ├── engine_ny/                        # New York ORB module
-│   └── engine_portfolio/                 # Portfolio management & stress testing engines
-│       ├── portfolio_engine.py
-│       ├── monte_carlo.py
-│       ├── walk_forward.py
-│       ├── parameter_sensitivity.py
-│       └── friction_decay.py
-├── visualization/                        # Quantitative charts & dashboards
-│   ├── visualization_asia/
-│   ├── visualization_ny/
-│   └── visualization_portfolio/
-├── testing/                              # Institutional Stress Test Runners
-│   ├── main_monte_carlo.py               # 1,000-run Monte Carlo runner
-│   ├── main_walk_forward.py              # Walk-Forward OOS runner
-│   ├── main_sensitivity.py              # Parameter Sensitivity Surface runner
-│   └── main_friction_decay.py            # Friction & Slippage Decay runner
-├── output/                               # Output dashboards, charts & CSV logs
-├── config.py                             # Asian MR configuration
-├── ny_config.py                          # New York ORB configuration
-├── portfolio_config.py                   # Master Portfolio configuration
-├── main_portfolio.py                     # Master Portfolio CLI entry point
-├── main.py                               # Standalone Asian MR runner
-├── main_ny.py                            # Standalone New York ORB runner
-├── requirements.txt                      # Python dependencies
+├── configs/                              # Centralized Configuration Modules
+│   ├── __init__.py
+│   ├── asia_config.py                    # Asian Mean Reversion parameters
+│   ├── london_config.py                  # London Pit ORB parameters
+│   ├── ny_config.py                      # New York ORB parameters
+│   ├── portfolio_config.py               # Master Portfolio risk & compounding settings
+│   └── live_config.py                    # MT5 Live connection & safety gates
+├── engine/                               # Core Quantitative Strategy Engines
+│   ├── __init__.py
+│   ├── asia/                             # Asian Mean Reversion engine
+│   │   ├── indicators.py
+│   │   ├── signals.py
+│   │   └── backtester.py
+│   ├── london/                           # London Pit ORB engine
+│   │   ├── strategy.py
+│   │   ├── trade_manager.py
+│   │   └── engine.py
+│   ├── ny/                               # New York ORB engine
+│   │   ├── strategy.py
+│   │   ├── trade_manager.py
+│   │   └── engine.py
+│   └── portfolio/                        # Master Portfolio multi-session engine
+│       └── portfolio_engine.py
+├── analytics/                            # Institutional Risk Analytics & Stress Testing
+│   ├── __init__.py
+│   ├── monte_carlo.py                    # 1,000-run Monte Carlo resampling & Ruin probability
+│   ├── walk_forward.py                   # Walk-Forward / Out-of-Sample Blind Split
+│   ├── friction_decay.py                 # Friction & Slippage Decay sweep ($0.00 - $3.00)
+│   └── parameter_sensitivity.py          # 35-cell Sensitivity Surface & Robustness Plateau
+├── visualization/                        # Quantitative Visual Dashboards & Charts
+│   ├── __init__.py
+│   ├── asia_charts.py                    # Asian MR 4-panel performance dashboard
+│   ├── ny_charts.py                      # NY ORB 4-panel performance dashboard
+│   └── portfolio_charts.py               # Master Portfolio 4-panel visual dashboard
+├── live/                                 # MetaTrader 5 Live Trading Bridge
+│   ├── live_runner.py                    # Multi-session live trading execution runner
+│   ├── mt5_connector.py                  # Low-latency MT5 bridge & order management
+│   ├── test_connection.py                # Live connection health-check diagnostic
+│   └── live_config.py                    # Backward-compatible config shim
+├── scripts/                              # Dedicated Automation & Stress Test Runners
+│   ├── run_monte_carlo.py                # Monte Carlo stress test CLI runner
+│   ├── run_walk_forward.py               # Walk-Forward OOS CLI runner
+│   ├── run_friction_decay.py             # Friction decay CLI runner
+│   └── run_sensitivity.py                # Parameter sensitivity CLI runner
+├── utils/                                # Data Ingestion & Causal Preprocessing
+│   ├── data_loader.py                    # Historical CSV loader & data validation
+│   └── mtf_loader.py                     # Causal Multi-Timeframe alignment pipeline
+├── data/                                 # Historical tick & bar datasets
+│   └── xauusd-m5-bid-2021-09-08-2026-09-08.csv
+├── output/                               # Performance charts, CSV logs, & visual dashboards
+├── main.py                               # Unified Master CLI Entry Point
+├── main_portfolio.py                     # Backward-compatible Master Portfolio runner
+├── main_london.py                        # Backward-compatible London ORB runner
+├── main_ny.py                            # Backward-compatible NY ORB runner
+├── main_asia.py                          # Backward-compatible Asian MR runner
+├── config.py                             # Backward-compatible Asian config shim
+├── london_config.py                      # Backward-compatible London config shim
+├── ny_config.py                          # Backward-compatible NY config shim
+├── portfolio_config.py                   # Backward-compatible Portfolio config shim
+├── requirements.txt                      # Project dependencies
 └── README.md
 ```
 
 ---
 
-## 🛠️ Quick Start & Installation
+## 🛠️ Unified CLI Usage
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/aryadnt07/quanttrade.git
-cd quanttrade
-```
+QuantTrade provides a clean, unified command-line interface via `main.py`:
 
-### 2. Install Dependencies
+### 1. Master Portfolio Execution
 ```bash
-pip install -r requirements.txt
-```
+# Run full Master Portfolio (Asia MR + London ORB + NY ORB)
+python main.py portfolio
 
-### 3. Run the Master Portfolio
-```bash
+# Or run with backward-compatible script
 python main_portfolio.py
 ```
 
-### 4. Run Institutional Stress Testing Suite
+### 2. Standalone Strategy Backtests
 ```bash
-# Monte Carlo Simulation (1,000 Permutations)
-python testing/main_monte_carlo.py
+# Asian Mean Reversion
+python main.py asia
 
-# Walk-Forward Out-of-Sample Blind Split (Year 1 vs Year 2)
-python testing/main_walk_forward.py
+# London Pit ORB
+python main.py london
 
-# Parameter Sensitivity Surface & Robustness Plateau (35 Grid Cells)
-python testing/main_sensitivity.py
+# New York ORB
+python main.py ny
+```
 
-# Friction & Slippage Decay Curve ($0.00 to $3.00 USD/oz)
-python testing/main_friction_decay.py
+### 3. Institutional Stress Testing Suite
+```bash
+# Monte Carlo Simulation (1,000 iterations)
+python main.py monte-carlo -n 1000
+
+# Walk-Forward Out-of-Sample Validation
+python main.py walk-forward
+
+# Friction & Slippage Decay Curve
+python main.py friction-decay
+
+# Parameter Sensitivity Surface & Robustness Plateau
+python main.py sensitivity
+```
+
+### 4. Live Trading & MT5 Execution
+```bash
+# Verify MT5 broker connection & health check
+python main.py live --check-only
+
+# Start live multi-session execution bot
+python main.py live
 ```
 
 ---

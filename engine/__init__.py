@@ -1,10 +1,21 @@
 """
-Master Quantitative Engines Package
-===================================
-Folder induk untuk seluruh mesin strategi kuantitatif:
-- engine.engine_asia       : Modul strategi Asian Mean Reversion (M5)
-- engine.engine_portfolio  : Modul orkestrator Master Multi-Regime Portfolio
+QuantTrade — Core Strategy & Portfolio Engine
+=============================================
+Koleksi mesin strategi kuantitatif dan orkestrator portofolio:
+- asia: Asian Mean Reversion Engine
+- london: London Pit Opening Range Breakout Engine
+- ny: New York Opening Range Breakout Engine
+- portfolio: Multi-Regime Master Portfolio Engine
 """
 
-import engine.engine_asia as engine_asia
-import engine.engine_portfolio as engine_portfolio
+from engine.asia import Backtester as AsianBacktester
+from engine.london import LondonBacktester
+from engine.ny import NYBacktester
+from engine.portfolio import PortfolioEngine
+
+__all__ = [
+    "AsianBacktester",
+    "LondonBacktester",
+    "NYBacktester",
+    "PortfolioEngine",
+]

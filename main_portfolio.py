@@ -23,11 +23,12 @@ if sys.platform == "win32":
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 import pandas as pd
-import portfolio_config as pcfg
+import configs.portfolio_config as pcfg
+import configs.ny_config as ny_cfg
 from utils.data_loader import load_csv
 from utils.mtf_loader import load_mtf_dataset
-from engine.engine_portfolio.portfolio_engine import PortfolioEngine
-from visualization.visualization_portfolio.portfolio_charts import (
+from engine.portfolio.portfolio_engine import PortfolioEngine
+from visualization.portfolio_charts import (
     plot_portfolio_dashboard,
     print_portfolio_trade_log,
     print_monthly_attribution_table,
@@ -104,7 +105,6 @@ def main():
 
     # ── 1. LOAD DATA ──
     if args.use_mtf:
-        import ny_config as ny_cfg
         ny_cfg.USE_HTF_TREND_FILTER = True
         print(f"[1/4] Loading Multi-Timeframe data (M5, H1, H4, M15)...")
         df_m5, htf_dfs = load_mtf_dataset(
@@ -115,7 +115,6 @@ def main():
         )
         print(f"      Loaded {len(df_m5):,} M5 execution bars dengan fitur HTF terpadu")
     else:
-        import ny_config as ny_cfg
         ny_cfg.USE_HTF_TREND_FILTER = False
         print(f"[1/4] Loading native M5 data dari: {args.data}")
         df_m5 = load_csv(args.data)

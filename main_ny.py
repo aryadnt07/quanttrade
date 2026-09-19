@@ -21,11 +21,11 @@ if sys.platform == "win32":
 
 import pandas as pd
 
-import ny_config as cfg
+import configs.ny_config as cfg
 from utils.data_loader import load_csv, get_default_data_path
-from engine.engine_ny.ny_strategy import compute_ny_indicators
-from engine.engine_ny.ny_engine import NYBacktester
-from visualization.visualization_ny.ny_charts import plot_ny_dashboard
+from engine.ny.strategy import compute_ny_indicators
+from engine.ny.engine import NYBacktester
+from visualization.ny_charts import plot_ny_dashboard
 
 
 def parse_args():

@@ -13,7 +13,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-import config as cfg
+import configs.asia_config as cfg
 
 
 REQUIRED_OHLC = {"open", "high", "low", "close"}

@@ -21,10 +21,10 @@ if sys.platform == "win32":
 
 import pandas as pd
 
-import london_config as cfg
+import configs.london_config as cfg
 from utils.data_loader import load_csv, get_default_data_path
-from engine.engine_london.london_strategy import compute_london_indicators
-from engine.engine_london.london_engine import LondonBacktester
+from engine.london.strategy import compute_london_indicators
+from engine.london.engine import LondonBacktester
 
 
 def parse_args():

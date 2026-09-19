@@ -36,8 +36,8 @@ from live.mt5_connector import MT5Connector, translate_retcode
 from live import live_config as lcfg
 
 # Indikator dan Logika Sinyal Asia
-from engine.engine_asia.indicators import compute_all as compute_asian_indicators
-from engine.engine_asia.signals import (
+from engine.asia.indicators import compute_all as compute_asian_indicators
+from engine.asia.signals import (
     check_entry_signal as check_asian_entry,
     Direction as AsianDirection,
 )
