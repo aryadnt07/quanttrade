@@ -159,7 +159,7 @@ def main():
         sys.exit(live_check_main())
 
     elif args.command == "telegram-test":
-        from live.telegram_notifier import test_telegram_connection
+        from live.telegram import test_telegram_connection
         success = test_telegram_connection()
         sys.exit(0 if success else 1)
 

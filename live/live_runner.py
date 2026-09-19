@@ -34,7 +34,7 @@ import MetaTrader5 as mt5
 
 from live.mt5_connector import MT5Connector, translate_retcode
 from live import live_config as lcfg
-from live.telegram_notifier import TelegramNotifier
+from live.telegram import TelegramNotifier
 
 # Indikator dan Logika Sinyal Asia
 from engine.asia.indicators import compute_all as compute_asian_indicators
