@@ -198,7 +198,12 @@ class LivePortfolioTrader:
                     f"• <b>Waktu:</b> <code>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</code>"
                 )
 
-        # Sinkronkan status transaksi hari ini dari broker
+        # Inisialisasi jadwal sesi hari ini sebelum sinkronisasi status
+        today_utc = datetime.now(timezone.utc).date()
+        self.current_trading_day = today_utc
+        self.today_schedule = SessionScheduleManager.get_today_schedule(today_utc)
+
+        # Sinkronkan status transaksi hari ini dari broker (Anti-Double Trade saat Restart/Crash)
         self._sync_state_from_broker()
 
         self.logger.info("[*] Memulai loop pemantauan pasar real-time (Tekan Ctrl+C untuk stop)...")
@@ -233,7 +238,7 @@ class LivePortfolioTrader:
         # 1. Cek posisi terbuka dan sinkronkan tracker posisi
         open_pos = self.connector.get_open_positions(lcfg.MAGIC_NUMBER)
         for p in open_pos:
-            comm = p.comment
+            comm = p.comment or ""
             sess = "Asia MR" if "Asia" in comm else ("London ORB" if "London" in comm else "New York ORB")
             dir_str = "BUY" if p.type == 0 else "SELL"
             risk_usd = abs(p.price_open - p.sl) * p.volume * lcfg.POINT_VALUE if p.sl else 0.0
@@ -255,10 +260,10 @@ class LivePortfolioTrader:
             elif "NY" in comm:
                 self.trades_today["NY"] = True
 
-        # 2. Cek transaksi yang sudah selesai hari ini
+        # 2. Cek transaksi yang sudah selesai hari ini (History Deals MT5)
         today_deals = self.connector.get_today_deals(lcfg.MAGIC_NUMBER)
         for d in today_deals:
-            comm = d.comment
+            comm = d.comment or ""
             if "AsiaMR" in comm:
                 self.trades_today["ASIAN"] = True
             elif "London" in comm:
@@ -266,11 +271,26 @@ class LivePortfolioTrader:
             elif "NY" in comm:
                 self.trades_today["NY"] = True
 
+        # 3. Cek pending orders aktif (jika mode Breakout PENDING_STOP_OCO)
+        open_pendings = self.connector.get_open_pending_orders(lcfg.MAGIC_NUMBER)
+        for o in open_pendings:
+            comm = o.comment or ""
+            if "London" in comm:
+                self.pending_orders["LONDON"].append(o.ticket)
+            elif "NY" in comm:
+                self.pending_orders["NY"].append(o.ticket)
+
         status_str = ", ".join([f"{k}: {'DONE' if v else 'READY'}" for k, v in self.trades_today.items()])
         self.logger.info(f"[*] State Recovery Hari Ini -> [{status_str}]")
 
     def _reset_daily_state_if_needed(self, today_date: date):
         """Reset state, counter, dan hitung ulang jadwal sesi jika tanggal UTC berganti."""
+        if self.current_trading_day is None:
+            # Startup awal: inisialisasi tanggal tanpa me-reset state yang baru di-sync
+            self.current_trading_day = today_date
+            self.today_schedule = SessionScheduleManager.get_today_schedule(today_date)
+            return
+
         if self.current_trading_day != today_date:
             self.current_trading_day = today_date
             self.trades_today = {"ASIAN": False, "LONDON": False, "NY": False}
