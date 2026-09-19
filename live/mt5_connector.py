@@ -205,7 +205,8 @@ class MT5Connector:
         sl: Optional[float] = None,
         tp: Optional[float] = None,
         comment: str = "FLG-Bot",
-        symbol: str = lcfg.SYMBOL
+        symbol: str = lcfg.SYMBOL,
+        max_spread: Optional[float] = None
     ) -> OrderResult:
         """Kirim market order ke MT5 Exness."""
         if not self.is_connected and not self.connect():
@@ -217,8 +218,9 @@ class MT5Connector:
 
         # Cek proteksi spread
         spread = tick.ask - tick.bid
-        if spread > lcfg.MAX_SPREAD_USD:
-            return OrderResult(False, -3, 0, 0.0, 0.0, f"Spread melebar: ${spread:.2f} > ${lcfg.MAX_SPREAD_USD:.2f}")
+        limit_spread = max_spread if max_spread is not None else (lcfg.MAX_SPREAD_USD if symbol == lcfg.SYMBOL else (tick.ask * 0.001))
+        if spread > limit_spread:
+            return OrderResult(False, -3, 0, 0.0, 0.0, f"Spread melebar: ${spread:.2f} > ${limit_spread:.2f}")
 
         sym_info = self.get_symbol_info(symbol)
         digits = sym_info.digits if sym_info else 2
