@@ -146,4 +146,14 @@ TELEGRAM_CHAT_ID        = _get_env_str("TELEGRAM_CHAT_ID", "")
 TELEGRAM_NOTIFY_MODE    = _get_env_str("TELEGRAM_NOTIFY_MODE", "BALANCED")
 TELEGRAM_HEARTBEAT_UTC_HOUR = _get_env_int("TELEGRAM_HEARTBEAT_UTC_HOUR", 0)
 
+# ─────────────────────────────────────────────
+# 9. LOGGING & AUDIT TRAIL (INSTITUTIONAL GRADE)
+# ─────────────────────────────────────────────
+LOG_DIR                 = os.path.join(str(Path(__file__).resolve().parent.parent), "logs")
+LOG_BACKUP_COUNT_DAYS   = _get_env_int("LOG_BACKUP_COUNT_DAYS", 30)
+LOG_LEVEL_CONSOLE       = _get_env_str("LOG_LEVEL_CONSOLE", "INFO")
+LOG_LEVEL_FILE          = _get_env_str("LOG_LEVEL_FILE", "DEBUG")
+TRADE_JOURNAL_FILE      = os.path.join(LOG_DIR, "live_trade_journal.csv")
+DISABLE_QUICK_EDIT      = _get_env_bool("DISABLE_QUICK_EDIT", True)
+
 

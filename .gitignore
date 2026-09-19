@@ -59,6 +59,10 @@ data/*
 output/*
 !output/.gitkeep
 
+# Runtime Logs & Live Trade Journal
+logs/*
+!logs/.gitkeep
+
 # Environment & Credentials
 .env
 .env.*
