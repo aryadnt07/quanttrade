@@ -18,6 +18,7 @@ Arsitektur Kepatuhan Audit Red Team (audit_report_live_connector.md):
 import os
 import sys
 import time
+import json
 import atexit
 from datetime import datetime, timezone, date
 from zoneinfo import ZoneInfo
@@ -178,7 +179,7 @@ class LivePortfolioTrader:
 
     def _acquire_pid_lock(self) -> bool:
         """
-        Kunci instance bot dengan PID lockfile (Point P0-002 Audit).
+        Kunci instance bot dengan PID lockfile eksklusif atomik (Point P0-002 Adversarial Audit).
         Mencegah dua instance bot berjalan bersamaan di VPS.
         """
         lock_file = getattr(lcfg, "PID_LOCK_FILE", "bot.lock")
@@ -202,19 +203,33 @@ class LivePortfolioTrader:
                         self.logger.critical(f"[💥 DUAL INSTANCE BLOCKED] Bot lain dengan PID {existing_pid} sedang aktif.")
                         return False
                     else:
-                        self.logger.warning(f"[⚠️ STALE LOCK DETECTED] Lockfile lama ditemukan (PID {existing_pid} tidak aktif). Menimpa lockfile...")
+                        self.logger.warning(f"[⚠️ STALE LOCK DETECTED] Lockfile lama ditemukan (PID {existing_pid} tidak aktif). Menghapus stale lockfile...")
+                        try:
+                            os.remove(lock_file)
+                        except OSError as err:
+                            self.logger.critical(f"[💥 CANNOT REMOVE STALE LOCK] Gagal menghapus stale lock: {err}. Bot berhenti (Fail-Closed).")
+                            return False
             except (ValueError, IOError) as e:
-                self.logger.warning(f"[⚠️ LOCKFILE READ ERROR] Gagal membaca lockfile ({e}). Menimpa lockfile...")
+                self.logger.warning(f"[⚠️ LOCKFILE READ ERROR] Gagal membaca lockfile ({e}). Mencoba menghapus...")
+                try:
+                    os.remove(lock_file)
+                except OSError as err:
+                    self.logger.critical(f"[💥 CANNOT REMOVE CORRUPT LOCK] Gagal menghapus corrupt lock: {err}. Bot berhenti (Fail-Closed).")
+                    return False
 
         try:
-            with open(lock_file, "w") as f:
+            # Mode 'x' = Exclusive Creation (O_CREAT | O_EXCL di level OS kernel)
+            with open(lock_file, "x") as f:
                 f.write(str(current_pid))
             self._lock_acquired = True
-            self.logger.info(f"[🔒 PID LOCK ACQUIRED] Bot instance terkunci dengan PID {current_pid} ({lock_file}).")
+            self.logger.info(f"[🔒 PID LOCK ACQUIRED] Bot instance terkunci atomik dengan PID {current_pid} ({lock_file}).")
             return True
+        except FileExistsError:
+            self.logger.critical(f"[💥 DUAL INSTANCE RACE DETECTED] Lockfile baru saja dibuat oleh proses lain. Eksekusi dibatalkan (Fail-Closed).")
+            return False
         except Exception as e:
-            self.logger.error(f"[X] Gagal membuat PID lockfile: {e}")
-            return True
+            self.logger.critical(f"[💥 LOCK ACQUIRE FAILED] Gagal membuat PID lockfile: {e}. Bot berhenti (Fail-Closed).")
+            return False
 
     def _release_pid_lock(self):
         """Hapus lockfile saat bot berhenti dengan aman."""
@@ -230,6 +245,93 @@ class LivePortfolioTrader:
             except Exception as e:
                 self.logger.warning(f"[!] Gagal membersihkan lockfile: {e}")
             self._lock_acquired = False
+
+    def _get_daily_state_path(self) -> str:
+        log_dir = getattr(lcfg, "LOG_DIR", "logs")
+        os.makedirs(log_dir, exist_ok=True)
+        return os.path.join(log_dir, "daily_circuit_breaker_state.json")
+
+    def _save_daily_circuit_breaker_state(self):
+        try:
+            path = self._get_daily_state_path()
+            data = {
+                "date": self.current_trading_day.isoformat() if self.current_trading_day else "",
+                "starting_equity": self.starting_daily_equity,
+                "circuit_breaker_tripped": self.daily_circuit_breaker_tripped,
+            }
+            with open(path, "w") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            self.logger.warning(f"[!] Gagal menyimpan daily circuit breaker state: {e}")
+
+    def _load_or_init_daily_circuit_breaker(self, today_date: date):
+        """
+        Inisialisasi baseline ekuitas harian dengan persistensi dan rekonsiliasi riwayat deal MT5 (NEW-P1-001).
+        Mencegah reset limit drawdown harian saat bot crash/restart di tengah sesi.
+        """
+        path = self._get_daily_state_path()
+        loaded = False
+
+        if os.path.exists(path):
+            try:
+                with open(path, "r") as f:
+                    data = json.load(f)
+                if data.get("date") == today_date.isoformat() and data.get("starting_equity"):
+                    self.starting_daily_equity = float(data["starting_equity"])
+                    self.daily_circuit_breaker_tripped = bool(data.get("circuit_breaker_tripped", False))
+                    loaded = True
+                    self.logger.info(f"[*] Daily State Restored -> Baseline Equity: ${self.starting_daily_equity:,.2f} | CB Tripped: {self.daily_circuit_breaker_tripped}")
+                    if self.daily_circuit_breaker_tripped:
+                        self.trades_today["ASIAN"] = True
+                        self.trades_today["LONDON"] = True
+                        self.trades_today["NY"] = True
+            except Exception as e:
+                self.logger.warning(f"[!] Gagal membaca daily state file: {e}")
+
+        if not loaded:
+            acc = self.connector.get_account_status()
+            curr_equity = acc.equity if acc else 1000.0
+            today_deals = self.connector.get_today_deals(lcfg.MAGIC_NUMBER)
+            today_realized_pnl = sum(d.profit for d in today_deals if hasattr(d, "profit"))
+            open_pos = self.connector.get_open_positions(lcfg.MAGIC_NUMBER)
+            current_floating = sum(p.profit for p in open_pos if hasattr(p, "profit"))
+
+            # Inferred baseline equity = ekuitas saat ini - PnL hari ini
+            inferred_start_equity = curr_equity - today_realized_pnl - current_floating
+            self.starting_daily_equity = max(10.0, inferred_start_equity)
+            self.daily_circuit_breaker_tripped = False
+            self._save_daily_circuit_breaker_state()
+            self.logger.info(f"[*] Daily State Initialized -> Baseline Equity: ${self.starting_daily_equity:,.2f} (Inferred from Deals PnL: ${today_realized_pnl:+.2f})")
+
+    def _reconcile_broker_orders(self, session: str) -> bool:
+        """
+        Cek apakah broker sebenarnya sudah mengisi order sesi ini (NEW-P0-001).
+        Mencegah double-order jika order_send timeout tapi order sebenarnya tereksekusi di broker.
+        Returns True jika order/deal sudah ada di server broker.
+        """
+        comm_keyword = "AsiaMR" if session == "ASIAN" else ("London" if session == "LONDON" else "NY")
+
+        # 1. Cek posisi terbuka di broker
+        open_pos = self.connector.get_open_positions(lcfg.MAGIC_NUMBER)
+        for p in open_pos:
+            comm = p.comment or ""
+            if comm_keyword in comm:
+                self.logger.warning(f"[🛡️ RECONCILIATION MATCH] Posisi {session} (Ticket {p.ticket}) sudah aktif di broker! Membatalkan retry duplicate.")
+                self.trades_today[session] = True
+                self.retry_counts[session] = 0
+                return True
+
+        # 2. Cek riwayat deal hari ini di broker
+        today_deals = self.connector.get_today_deals(lcfg.MAGIC_NUMBER)
+        for d in today_deals:
+            comm = d.comment or ""
+            if comm_keyword in comm:
+                self.logger.warning(f"[🛡️ RECONCILIATION MATCH] Deal {session} (Ticket {d.ticket}) sudah tercatat di history broker! Membatalkan retry duplicate.")
+                self.trades_today[session] = True
+                self.retry_counts[session] = 0
+                return True
+
+        return False
 
     def start(self):
         """Memulai loop eksekusi live bot."""
@@ -266,7 +368,6 @@ class LivePortfolioTrader:
 
         acc = self.connector.get_account_status()
         if acc:
-            self.starting_daily_equity = acc.equity
             self.logger.info(f"[✓] Terhubung ke Akun : {acc.login} ({acc.server})")
             self.logger.info(f"    Saldo Akun        : ${acc.balance:,.2f} {acc.currency}")
             self.logger.info(f"    Ekuitas Akun      : ${acc.equity:,.2f} {acc.currency}")
@@ -299,6 +400,9 @@ class LivePortfolioTrader:
         today_utc = datetime.now(timezone.utc).date()
         self.current_trading_day = today_utc
         self.today_schedule = SessionScheduleManager.get_today_schedule(today_utc)
+
+        # Inisialisasi status circuit breaker dengan persistensi (NEW-P1-001)
+        self._load_or_init_daily_circuit_breaker(today_utc)
 
         # Sinkronkan status transaksi hari ini dari broker (Anti-Double Trade saat Restart/Crash)
         self._sync_state_from_broker()
@@ -387,9 +491,7 @@ class LivePortfolioTrader:
             # Startup awal: inisialisasi tanggal tanpa me-reset state yang baru di-sync
             self.current_trading_day = today_date
             self.today_schedule = SessionScheduleManager.get_today_schedule(today_date)
-            acc = self.connector.get_account_status()
-            if acc:
-                self.starting_daily_equity = acc.equity
+            self._load_or_init_daily_circuit_breaker(today_date)
             return
 
         if self.current_trading_day != today_date:
@@ -403,10 +505,7 @@ class LivePortfolioTrader:
             self.ny_or_low = None
             self.ny_or_range = None
             self.pending_orders = {"LONDON": [], "NY": []}
-            self.daily_circuit_breaker_tripped = False
-            acc = self.connector.get_account_status()
-            if acc:
-                self.starting_daily_equity = acc.equity
+            self._load_or_init_daily_circuit_breaker(today_date)
 
             # Hitung jadwal sesi hari ini dengan DST dinamis (Point #4 Audit)
             self.today_schedule = SessionScheduleManager.get_today_schedule(today_date)
@@ -523,6 +622,7 @@ class LivePortfolioTrader:
             if daily_drawdown_pct >= max_daily_loss:
                 if not self.daily_circuit_breaker_tripped:
                     self.daily_circuit_breaker_tripped = True
+                    self._save_daily_circuit_breaker_state()
                     msg = (
                         f"[🛑 DAILY CIRCUIT BREAKER ACTIVATED] Daily Drawdown {daily_drawdown_pct*100:.2f}% "
                         f">= limit {max_daily_loss*100:.1f}%! "
@@ -723,7 +823,7 @@ class LivePortfolioTrader:
     # MODUL 1: ASIAN MEAN REVERSION (01:00 - 04:30 UTC)
     # ─────────────────────────────────────────────────────────────
     def _evaluate_asian_mr(self, df_m5: pd.DataFrame, now_utc: datetime, tick: dict, equity: float):
-        if not lcfg.ENABLE_ASIAN_MR or self.trades_today["ASIAN"] or self._order_in_flight["ASIAN"]:
+        if not lcfg.ENABLE_ASIAN_MR or self.trades_today["ASIAN"] or self._order_in_flight["ASIAN"] or self._reconcile_broker_orders("ASIAN"):
             return
 
         hm = (now_utc.hour, now_utc.minute)
@@ -752,7 +852,24 @@ class LivePortfolioTrader:
         lot = round(lot, 2)
 
         dir_str = "BUY" if sig.direction == AsianDirection.LONG else "SELL"
-        self.logger.info(f"\n[🚀 SINYAL ASIA MR] {dir_str} {lot} Lot XAU/USD | Entry: {sig.entry_price:.2f} | SL: {sig.stop_loss:.2f} | TP: {sig.take_profit:.2f}")
+
+        # Validasi TP & Stop Level Broker (P1-006 Safeguard)
+        sym_info = self.connector.get_symbol_info(lcfg.SYMBOL)
+        point = sym_info.point if sym_info else 0.01
+        stops_level = (sym_info.stops_level * point) if sym_info and hasattr(sym_info, "stops_level") else 0.30
+
+        tp_val = sig.take_profit
+        if dir_str == "BUY":
+            if tp_val is not None and tp_val <= tick["ask"] + stops_level:
+                self.logger.warning(f"[⚠️ INVALID TP SAFEGUARD] TP ({tp_val:.2f}) <= Ask+StopLevel ({tick['ask']+stops_level:.2f}). Mengosongkan hard TP di broker, mengandalkan dynamic Z-Neutral exit.")
+                tp_val = None
+        else:
+            if tp_val is not None and tp_val >= tick["bid"] - stops_level:
+                self.logger.warning(f"[⚠️ INVALID TP SAFEGUARD] TP ({tp_val:.2f}) >= Bid-StopLevel ({tick['bid']-stops_level:.2f}). Mengosongkan hard TP di broker, mengandalkan dynamic Z-Neutral exit.")
+                tp_val = None
+
+        tp_log = f"{tp_val:.2f}" if tp_val is not None else "Dynamic Z-Neutral"
+        self.logger.info(f"\n[🚀 SINYAL ASIA MR] {dir_str} {lot} Lot XAU/USD | Entry: {sig.entry_price:.2f} | SL: {sig.stop_loss:.2f} | TP: {tp_log}")
 
         self._order_in_flight["ASIAN"] = True
         try:
@@ -760,7 +877,7 @@ class LivePortfolioTrader:
                 direction=dir_str,
                 volume=lot,
                 sl=sig.stop_loss,
-                tp=sig.take_profit,
+                tp=tp_val,
                 comment="AsiaMR-FLG"
             )
             self._handle_order_result("ASIAN", res)
@@ -771,7 +888,7 @@ class LivePortfolioTrader:
     # MODUL 2: LONDON PIT ORB (08:15 - 11:30 UTC)
     # ─────────────────────────────────────────────────────────────
     def _evaluate_london_orb(self, df_m5: pd.DataFrame, now_utc: datetime, tick: dict, equity: float, open_pendings: list):
-        if not lcfg.ENABLE_LONDON_ORB or self.trades_today["LONDON"] or self._order_in_flight["LONDON"]:
+        if not lcfg.ENABLE_LONDON_ORB or self.trades_today["LONDON"] or self._order_in_flight["LONDON"] or self._reconcile_broker_orders("LONDON"):
             return
 
         hm = (now_utc.hour, now_utc.minute)
@@ -888,7 +1005,7 @@ class LivePortfolioTrader:
     # MODUL 3: NEW YORK ORB (DYNAMIC DST TRACKING)
     # ─────────────────────────────────────────────────────────────
     def _evaluate_ny_orb(self, df_m5: pd.DataFrame, now_utc: datetime, tick: dict, equity: float, open_pendings: list):
-        if not lcfg.ENABLE_NY_ORB or self.trades_today["NY"] or self._order_in_flight["NY"]:
+        if not lcfg.ENABLE_NY_ORB or self.trades_today["NY"] or self._order_in_flight["NY"] or self._reconcile_broker_orders("NY"):
             return
 
         hm = (now_utc.hour, now_utc.minute)
@@ -1005,13 +1122,16 @@ class LivePortfolioTrader:
     # REQUOTE & ANTI-SPAM LOCKOUT HANDLER (Point #2 Audit)
     # ─────────────────────────────────────────────────────────────
     def _handle_order_result(self, session: str, res):
-        """Kelola hasil pengiriman order dengan proteksi max-retries (Point #2 Audit)."""
-        self._order_in_flight[session] = False
+        """Kelola hasil pengiriman order dengan proteksi max-retries dan rekonsiliasi broker (Point #2 & NEW-P0-001)."""
         if res.success:
             self.logger.info(f"[✓] ORDER {session} BERHASIL! Ticket: {res.order_id} @ {res.price}\n")
             self.trades_today[session] = True
             self.retry_counts[session] = 0
         else:
+            # Rekonsiliasi broker sebelum retry: cek apakah order sebenarnya sudah terisi di broker saat timeout (NEW-P0-001)
+            if self._reconcile_broker_orders(session):
+                return
+
             self.retry_counts[session] += 1
             self.logger.error(f"[X] ORDER {session} GAGAL ({self.retry_counts[session]}/{lcfg.MAX_SESSION_RETRIES}): {res.comment}")
 

@@ -13,6 +13,7 @@ Tests:
 import os
 import sys
 import time
+import json
 import unittest
 from datetime import datetime, timezone, date
 from unittest.mock import MagicMock, patch
@@ -226,6 +227,152 @@ class TestLiveAuditGuards(unittest.TestCase):
             trader._manage_open_positions([mock_pos], mock_df_tp, now_utc)
             mock_close.assert_called_with(12345, comment="TP-Z-Neutral")
 
+    # ─────────────────────────────────────────────────────────────
+    # TEST 7: PID LOCK FAIL-CLOSED SAFETY (P0-002)
+    # ─────────────────────────────────────────────────────────────
+    def test_pid_lock_fail_closed(self):
+        trader = LivePortfolioTrader()
+        with patch.object(lcfg, "PID_LOCK_FILE", self.test_lock_file):
+            with patch("builtins.open", side_effect=PermissionError("Access denied")):
+                # When open() raises an error, must fail-closed (return False)
+                self.assertFalse(trader._acquire_pid_lock())
+                self.assertFalse(trader._lock_acquired)
+
+    # ─────────────────────────────────────────────────────────────
+    # TEST 8: BROKER ORDER RECONCILIATION GUARD (NEW-P0-001)
+    # ─────────────────────────────────────────────────────────────
+    def test_reconcile_broker_orders(self):
+        trader = LivePortfolioTrader()
+
+        # Case 1: Broker has an open position matching magic comment
+        mock_pos = MagicMock()
+        mock_pos.ticket = 88888
+        mock_pos.comment = "AsiaMR-FLG"
+
+        trader._order_in_flight["ASIAN"] = True
+        with patch.object(trader.connector, "get_open_positions", return_value=[mock_pos]):
+            res = trader._reconcile_broker_orders("ASIAN")
+            self.assertTrue(res, "Harus mengembalikan True jika posisi aktif ditemukan di broker")
+            self.assertTrue(trader.trades_today["ASIAN"], "trades_today harus di-set True jika posisi ditemukan di broker")
+
+        # Case 2: No position at broker
+        trader.trades_today["ASIAN"] = False
+        with patch.object(trader.connector, "get_open_positions", return_value=[]), \
+             patch.object(trader.connector, "get_today_deals", return_value=[]):
+            res = trader._reconcile_broker_orders("ASIAN")
+            self.assertFalse(res, "Harus mengembalikan False jika order tidak ada di broker")
+
+    # ─────────────────────────────────────────────────────────────
+    # TEST 9: DAILY CIRCUIT BREAKER PERSISTENCE (NEW-P1-001)
+    # ─────────────────────────────────────────────────────────────
+    def test_daily_circuit_breaker_persistence(self):
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp_dir:
+            test_state_file = os.path.join(temp_dir, "test_daily_state.json")
+            trader = LivePortfolioTrader()
+
+            with patch.object(trader, "_get_daily_state_path", return_value=test_state_file):
+                # 1. Simpan state hari ini
+                test_date = date(2026, 9, 20)
+                trader.current_trading_day = test_date
+                trader.starting_daily_equity = 1000.0
+                trader.daily_circuit_breaker_tripped = True
+                trader._save_daily_circuit_breaker_state()
+                self.assertTrue(os.path.exists(test_state_file))
+
+                with open(test_state_file, "r") as f:
+                    data = json.load(f)
+                self.assertEqual(data["date"], "2026-09-20")
+                self.assertEqual(data["starting_equity"], 1000.0)
+                self.assertTrue(data["circuit_breaker_tripped"])
+
+                # 2. Restart di hari yang sama: memuat state tersimpan
+                mock_acc = MagicMock()
+                mock_acc.equity = 940.0
+                with patch.object(trader.connector, "get_account_status", return_value=mock_acc):
+                    trader.starting_daily_equity = None
+                    trader.daily_circuit_breaker_tripped = False
+                    trader._load_or_init_daily_circuit_breaker(test_date)
+
+                    self.assertEqual(trader.starting_daily_equity, 1000.0)
+                    self.assertTrue(trader.daily_circuit_breaker_tripped)
+
+                # 3. Hari baru: state di-reset ke ekuitas baru
+                tomorrow_date = date(2026, 9, 21)
+                mock_acc.equity = 950.0
+                with patch.object(trader.connector, "get_account_status", return_value=mock_acc), \
+                     patch.object(trader.connector, "get_today_deals", return_value=[]), \
+                     patch.object(trader.connector, "get_open_positions", return_value=[]):
+                    trader._load_or_init_daily_circuit_breaker(tomorrow_date)
+                    self.assertEqual(trader.starting_daily_equity, 950.0)
+                    self.assertFalse(trader.daily_circuit_breaker_tripped)
+
+    # ─────────────────────────────────────────────────────────────
+    # TEST 10: BROKER TIMEZONE PROBE (P0-003)
+    # ─────────────────────────────────────────────────────────────
+    def test_probe_broker_timezone(self):
+        connector = MT5Connector()
+        mock_acc = MagicMock()
+        mock_acc.server = "Exness-Real10"
+
+        with patch.object(connector, "get_account_status", return_value=mock_acc), \
+             patch.object(lcfg, "BROKER_SERVER_OFFSET_HOURS", 999):
+            connector._cached_broker_offset_sec = None
+            probe = connector.probe_broker_timezone()
+            self.assertEqual(probe["server"], "Exness-Real10")
+            self.assertEqual(probe["offset_hours"], 0)
+            self.assertEqual(probe["offset_seconds"], 0)
+            self.assertIn("now_utc", probe)
+
+    # ─────────────────────────────────────────────────────────────
+    # TEST 11: ASIA MR TP STOPS LEVEL SAFEGUARD (P1-006)
+    # ─────────────────────────────────────────────────────────────
+    def test_asia_mr_tp_stops_level_safeguard(self):
+        from engine.asia.signals import Signal, Direction as AsianDirection
+        trader = LivePortfolioTrader()
+        trader.today_schedule = {
+            "ASIAN_START": (0, 0), "ASIAN_END": (23, 59),
+            "LONDON_ENTRY_START": (0, 0), "LONDON_ENTRY_END": (23, 59),
+            "NY_ENTRY_START": (0, 0), "NY_ENTRY_END": (23, 59)
+        }
+
+        # Sinyal BUY dengan TP terlalu dekat (4000.20 saat Ask 4000.00, stop level 0.50)
+        sig = Signal(
+            bar_index=0,
+            datetime=pd.Timestamp.now(timezone.utc),
+            direction=AsianDirection.LONG,
+            entry_price=4000.0,
+            stop_loss=3990.0,
+            take_profit=4000.20,
+            zscore=-2.5,
+            rsi=25.0,
+            atr=2.0
+        )
+
+        sym_info = MagicMock()
+        sym_info.point = 0.01
+        sym_info.stops_level = 50  # 50 * 0.01 = 0.50 USD
+
+        df_dummy = pd.DataFrame({
+            "datetime": pd.date_range("2026-09-18", periods=100, freq="5min", tz="UTC"),
+            "open": [4000.0]*100, "high": [4010.0]*100, "low": [3990.0]*100, "close": [4005.0]*100, "volume": [100]*100
+        })
+
+        with patch("live.live_runner.check_asian_entry", return_value=sig), \
+             patch("live.live_runner.compute_asian_indicators", return_value=df_dummy), \
+             patch.object(trader, "_reconcile_broker_orders", return_value=False), \
+             patch.object(trader.connector, "get_symbol_info", return_value=sym_info), \
+             patch.object(trader.connector, "open_market_order") as mock_open:
+
+            tick = {"bid": 3999.8, "ask": 4000.0, "spread": 0.2}
+            trader._evaluate_asian_mr(df_dummy, datetime.now(timezone.utc), tick, 1000.0)
+
+            # Verifikasi bahwa open_market_order dipanggil dengan tp=None (karena tidak memenuhi stop level)
+            mock_open.assert_called_once()
+            call_kwargs = mock_open.call_args[1]
+            self.assertIsNone(call_kwargs["tp"], "TP harus diubah menjadi None jika melanggar broker stops_level")
+
 
 if __name__ == "__main__":
     unittest.main()
+

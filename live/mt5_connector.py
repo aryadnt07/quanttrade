@@ -120,38 +120,80 @@ class MT5Connector:
         
         Prioritas:
         1. Konfigurasi manual BROKER_SERVER_OFFSET_HOURS jika tidak 999.
-        2. Auto-detect saat market buka via perbandingan tick.time dengan host UTC timestamp.
-        3. Fallback cerdas: 0 jika Exness (GMT+0), atau 0 sebagai default aman.
+        2. Known broker identity (Exness = 0h UTC).
+        3. Active Candle Probe: Membandingkan candle M5 terakhir terhadap waktu UTC host.
+        4. Fallback aman: 0 detik.
         """
         configured_offset = getattr(lcfg, "BROKER_SERVER_OFFSET_HOURS", 999)
         if configured_offset != 999:
-            return configured_offset * 3600
+            return int(configured_offset * 3600)
 
         if self._cached_broker_offset_sec is not None:
             return self._cached_broker_offset_sec
 
-        try:
-            tick = mt5.symbol_info_tick(lcfg.SYMBOL)
-            if tick:
-                now_utc_ts = datetime.datetime.now(datetime.timezone.utc).timestamp()
-                age = abs(now_utc_ts - tick.time)
-                # Jika tick segar (< 300s, market aktif buka)
-                if age < 300:
-                    diff_sec = tick.time - now_utc_ts
-                    offset_hours = round(diff_sec / 3600.0)
-                    self._cached_broker_offset_sec = offset_hours * 3600
-                    return self._cached_broker_offset_sec
-        except Exception:
-            pass
-
-        # Fallback deteksi broker
+        # 1. Cek profil server broker (Exness selalu UTC+0 / GMT+0)
         acc = self.get_account_status()
         if acc and "exness" in acc.server.lower():
             self._cached_broker_offset_sec = 0
             return 0
 
+        # 2. Candle Probe: Bandingkan candle bar M5 server vs UTC host
+        try:
+            rates = mt5.copy_rates_from_pos(lcfg.SYMBOL, mt5.TIMEFRAME_M5, 0, 1)
+            if rates is not None and len(rates) > 0:
+                last_bar_time = rates[-1]["time"]
+                now_utc = datetime.datetime.now(datetime.timezone.utc)
+                now_utc_ts = now_utc.timestamp()
+
+                # Jika market buka (candle segar dalam 15 menit)
+                if abs(now_utc_ts - last_bar_time) < 900:
+                    curr_m5_utc_minute = (now_utc.minute // 5) * 5
+                    expected_m5_utc = now_utc.replace(minute=curr_m5_utc_minute, second=0, microsecond=0).timestamp()
+                    diff_sec = last_bar_time - expected_m5_utc
+                    offset_hours = round(diff_sec / 3600.0)
+                    self._cached_broker_offset_sec = int(offset_hours * 3600)
+                    return self._cached_broker_offset_sec
+        except Exception:
+            pass
+
+        # Fallback broker Forex umum (IC Markets / Pepperstone / Vantage / FTMO yang memakai GMT+2/GMT+3)
+        if acc and any(b in acc.server.lower() for b in ["icmarkets", "pepperstone", "vantage", "ftmo"]):
+            self._cached_broker_offset_sec = 2 * 3600
+            return self._cached_broker_offset_sec
+
         self._cached_broker_offset_sec = 0
         return 0
+
+    def probe_broker_timezone(self) -> Dict[str, Any]:
+        """
+        Diagnostik probe waktu server broker vs host UTC (Adversarial Audit Recommendation).
+        """
+        acc = self.get_account_status()
+        server_name = acc.server if acc else "Unknown"
+        offset_sec = self.get_broker_server_utc_offset_seconds()
+        offset_hours = offset_sec // 3600
+        now_utc = datetime.datetime.now(datetime.timezone.utc)
+
+        rates = mt5.copy_rates_from_pos(lcfg.SYMBOL, mt5.TIMEFRAME_M5, 0, 1)
+        last_bar_raw = None
+        last_bar_utc = None
+        diff_minutes = 0.0
+
+        if rates is not None and len(rates) > 0:
+            raw_ts = int(rates[-1]["time"])
+            last_bar_raw = datetime.datetime.fromtimestamp(raw_ts, tz=datetime.timezone.utc)
+            last_bar_utc = datetime.datetime.fromtimestamp(raw_ts - offset_sec, tz=datetime.timezone.utc)
+            diff_minutes = (now_utc - last_bar_utc).total_seconds() / 60.0
+
+        return {
+            "server": server_name,
+            "offset_hours": offset_hours,
+            "offset_seconds": offset_sec,
+            "now_utc": now_utc,
+            "last_bar_raw": last_bar_raw,
+            "last_bar_utc": last_bar_utc,
+            "diff_minutes": diff_minutes,
+        }
 
     def get_tick(self, symbol: str = lcfg.SYMBOL) -> Optional[Dict[str, float]]:
         """Ambil bid, ask, dan spread terkini."""
@@ -194,18 +236,25 @@ class MT5Connector:
     def _safe_order_send(self, request: dict, timeout_sec: Optional[float] = None) -> Any:
         """
         Kirim order_send ke MT5 dengan timeout guard via ThreadPoolExecutor.
-        Mencegah bot membeku (freeze) jika IPC MT5 hang atau tidak merespons (Point P0-004 Audit).
+        Menggunakan shutdown(wait=False, cancel_futures=True) saat timeout agar bot
+        TIDAK MEMBEKU (Deadlock Immunity - Point P0-004 Adversarial Audit).
         """
         if timeout_sec is None:
             timeout_sec = getattr(lcfg, "ORDER_TIMEOUT_SEC", 10.0)
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        try:
             future = executor.submit(mt5.order_send, request)
-            try:
-                return future.result(timeout=timeout_sec)
-            except concurrent.futures.TimeoutError:
-                print(f"[💥 IPC TIMEOUT] mt5.order_send() melampaui batas waktu {timeout_sec}s! Mencegah bot freeze.")
-                return None
+            res = future.result(timeout=timeout_sec)
+            executor.shutdown(wait=False)
+            return res
+        except concurrent.futures.TimeoutError:
+            print(f"[💥 IPC TIMEOUT] mt5.order_send() melampaui batas waktu {timeout_sec}s! Thread dilepaskan tanpa blokir (wait=False).")
+            executor.shutdown(wait=False, cancel_futures=True)
+            return None
+        except Exception as e:
+            executor.shutdown(wait=False, cancel_futures=True)
+            return None
 
     def get_open_positions(self, magic: int = lcfg.MAGIC_NUMBER) -> List[Any]:
         """Ambil daftar posisi aktif yang dibuka oleh bot."""

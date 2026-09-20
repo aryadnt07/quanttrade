@@ -106,6 +106,13 @@ def run_live_system_check() -> bool:
     print(f"      - Terminal Build   : {term_ver}")
     print(f"      - IPC Ping Latency : {latency_ms:.1f} ms")
     print(f"      - Terminal Path    : {term_path}")
+
+    # Broker Server Timezone Probe (Audit P0-003)
+    tz_probe = connector.probe_broker_timezone()
+    offset_sign = f"+{tz_probe['offset_hours']}" if tz_probe['offset_hours'] >= 0 else f"{tz_probe['offset_hours']}"
+    print(f"      - Broker Server Tz : UTC{offset_sign} ({tz_probe['offset_seconds']}s offset | Server: {tz_probe['server']})")
+    if tz_probe['last_bar_utc']:
+        print(f"      - Last M5 Bar (UTC): {tz_probe['last_bar_utc'].strftime('%Y-%m-%d %H:%M:%S')} (delay: {tz_probe['diff_minutes']:.1f} min)")
     print("      [✓] PASS: Koneksi IPC ke MetaTrader 5 berhasil.")
 
     # ─────────────────────────────────────────────────────────────
