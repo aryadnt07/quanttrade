@@ -303,7 +303,7 @@ class LivePortfolioTrader(
     def start(self):
         """Memulai loop eksekusi live bot."""
         if not self._acquire_pid_lock():
-            return
+            sys.exit(1)
         atexit.register(self._release_pid_lock)
 
         if getattr(lcfg, "DISABLE_QUICK_EDIT", True):
@@ -312,8 +312,8 @@ class LivePortfolioTrader(
 
         tg_status = f"ON ({self.telegram.mode} - Option A)" if self.telegram.is_configured else "OFF"
         banner = (
-            "\n" + "=" * 76 + "\n"
-            "   QUANTITATIVE MASTER PORTFOLIO — INSTITUTIONAL LIVE TRADER (MT5)\n"
+            f"\n{'=' * 76}\n"
+            f"   QUANTITATIVE MASTER PORTFOLIO — INSTITUTIONAL LIVE TRADER (MT5)\n"
             f"   Simbol: {lcfg.SYMBOL} | Magic: {lcfg.MAGIC_NUMBER}\n"
             f"   Mode Eksekusi Breakout : [{lcfg.BREAKOUT_EXECUTION_MODE}]\n"
             f"   Dynamic DST Tracking   : [{'ON (Wall Street Local Time)' if lcfg.USE_DYNAMIC_DST else 'OFF'}]\n"
@@ -321,7 +321,7 @@ class LivePortfolioTrader(
             f"   Telegram Notifier      : [{tg_status}]\n"
             f"   Dual Logging           : [ON -> File: {getattr(lcfg, 'LOG_DIR', 'logs')} | Retensi: {getattr(lcfg, 'LOG_BACKUP_COUNT_DAYS', 30)} hari]\n"
             f"   Trade Journal CSV      : [ON -> {getattr(lcfg, 'TRADE_JOURNAL_FILE', 'logs/live_trade_journal.csv')}]\n"
-            "=" * 76 + "\n"
+            f"{'=' * 76}\n"
         )
         print(banner)
         self.logger.info("Bot Live Execution Engine diinisialisasi.")
@@ -329,7 +329,8 @@ class LivePortfolioTrader(
         if not self.connector.connect():
             self.logger.error("[X] GAGAL: Tidak dapat terhubung ke MetaTrader 5. Pastikan MT5 terbuka dan login.")
             self.telegram.notify_critical_alert("Koneksi MT5 Gagal", "Bot tidak dapat terhubung ke terminal MetaTrader 5.")
-            return
+            sys.exit(1)
+
 
         acc = self.connector.get_account_status()
         if acc:

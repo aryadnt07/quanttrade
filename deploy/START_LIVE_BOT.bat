@@ -8,8 +8,11 @@ echo ================================================================
 echo.
 echo [*] Memulai QuantTrade Live Execution Runner...
 python main.py live
-if %ERRORLEVEL% NEQ 0 (
-    echo.
-    echo [!] Bot berhenti dengan kode error: %ERRORLEVEL%.
-    pause
-)
+echo.
+echo ================================================================
+echo [!] Bot telah berhenti (Exit Code: %ERRORLEVEL%).
+echo     Terminal tetap terbuka agar Anda dapat membaca log di atas.
+echo ================================================================
+echo.
+pause
+
