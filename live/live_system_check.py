@@ -80,7 +80,11 @@ def run_live_system_check() -> bool:
         print("      [X] GAGAL: Python terdeteksi 32-bit.")
         overall_passed = False
     else:
-        print("      [✓] PASS: Lingkungan host & arsitektur 64-bit valid.")
+        if sys.version_info < (3, 9):
+            warnings.append(f"Python versi {py_ver} < 3.9 terdeteksi. Disarankan Python >= 3.9 untuk support cancel_futures.")
+            print(f"      [!] PERINGATAN: Python {py_ver} < 3.9 (fitur cancel_futures berjalan dalam mode fallback).")
+        else:
+            print("      [✓] PASS: Lingkungan host & arsitektur 64-bit valid (Python >= 3.9 OK).")
 
     # ─────────────────────────────────────────────────────────────
     # [2/8] MT5 TERMINAL IPC & BROKER SERVER AUTHENTICATION

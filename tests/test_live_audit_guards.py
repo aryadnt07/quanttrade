@@ -372,7 +372,60 @@ class TestLiveAuditGuards(unittest.TestCase):
             call_kwargs = mock_open.call_args[1]
             self.assertIsNone(call_kwargs["tp"], "TP harus diubah menjadi None jika melanggar broker stops_level")
 
+    # ─────────────────────────────────────────────────────────────
+    # TEST 12: DAILY CIRCUIT BREAKER STRICT FAIL-CLOSED (P1)
+    # ─────────────────────────────────────────────────────────────
+    def test_daily_circuit_breaker_fail_closed(self):
+        trader = LivePortfolioTrader()
+        today = date(2026, 9, 20)
+
+        # When get_account_status returns None, must raise RuntimeError, never fallback to 1000
+        with patch.object(trader, "_get_daily_state_path", return_value="non_existent_file.json"), \
+             patch.object(trader.connector, "get_account_status", return_value=None):
+            with self.assertRaises(RuntimeError):
+                trader._load_or_init_daily_circuit_breaker(today)
+
+    # ─────────────────────────────────────────────────────────────
+    # TEST 13: CONNECTOR DEFENSE-IN-DEPTH INVERTED TP GUARD (P1)
+    # ─────────────────────────────────────────────────────────────
+    def test_mt5_connector_inverted_tp_guard(self):
+        connector = MT5Connector()
+
+        sym_info = MagicMock()
+        sym_info.digits = 2
+        sym_info.point = 0.01
+        sym_info.stops_level = 20  # 0.20 USD
+
+        mock_tick = MagicMock()
+        mock_tick.bid = 4000.0
+        mock_tick.ask = 4000.2
+        mock_tick.time = time.time()
+
+        captured_requests = []
+        def capture_order_send(req):
+            captured_requests.append(req)
+            return MagicMock(retcode=10009, order=111, price=req["price"], volume=req["volume"])
+
+        with patch.object(connector, "is_connected", True), \
+             patch.object(connector, "get_symbol_info", return_value=sym_info), \
+             patch("live.mt5_connector.mt5.symbol_info_tick", return_value=mock_tick), \
+             patch("live.mt5_connector.mt5.order_send", side_effect=capture_order_send), \
+             patch.object(lcfg, "DRY_RUN", False):
+
+            # 1. Inverted BUY TP (TP 3990 <= Entry 4000.2)
+            connector.open_market_order("BUY", volume=0.1, sl=3990.0, tp=3990.0)
+            self.assertNotIn("tp", captured_requests[-1], "Inverted BUY TP harus dihapus dari payload MT5")
+
+            # 2. Inverted SELL TP (TP 4010 >= Entry 4000.0)
+            connector.open_market_order("SELL", volume=0.1, sl=4010.0, tp=4010.0)
+            self.assertNotIn("tp", captured_requests[-1], "Inverted SELL TP harus dihapus dari payload MT5")
+
+            # 3. BUY TP too close to stops level (TP 4000.30 vs Entry 4000.20, stops_level=0.20 -> min TP 4000.40)
+            connector.open_market_order("BUY", volume=0.1, sl=3990.0, tp=4000.30)
+            self.assertNotIn("tp", captured_requests[-1], "TP terlalu dekat dengan stops_level harus dihapus dari payload MT5")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

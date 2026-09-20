@@ -290,7 +290,11 @@ class LivePortfolioTrader:
 
         if not loaded:
             acc = self.connector.get_account_status()
-            curr_equity = acc.equity if acc else 1000.0
+            if not acc or acc.equity <= 0:
+                self.logger.critical("[💥 EQUITY FETCH FAILED] Gagal membaca status akun MT5 saat inisialisasi Daily Circuit Breaker. Bot berhenti (Fail-Closed).")
+                raise RuntimeError("Account equity is unavailable from MT5. Aborting bot to protect capital.")
+
+            curr_equity = acc.equity
             today_deals = self.connector.get_today_deals(lcfg.MAGIC_NUMBER)
             today_realized_pnl = sum(d.profit for d in today_deals if hasattr(d, "profit"))
             open_pos = self.connector.get_open_positions(lcfg.MAGIC_NUMBER)
@@ -298,7 +302,12 @@ class LivePortfolioTrader:
 
             # Inferred baseline equity = ekuitas saat ini - PnL hari ini
             inferred_start_equity = curr_equity - today_realized_pnl - current_floating
-            self.starting_daily_equity = max(10.0, inferred_start_equity)
+            if inferred_start_equity <= 0:
+                self.logger.warning(f"[⚠️ INFERRED EQUITY ANOMALY] Inferred start equity (${inferred_start_equity:.2f}) <= 0. Menggunakan current equity (${curr_equity:.2f}) sebagai baseline.")
+                self.starting_daily_equity = curr_equity
+            else:
+                self.starting_daily_equity = inferred_start_equity
+
             self.daily_circuit_breaker_tripped = False
             self._save_daily_circuit_breaker_state()
             self.logger.info(f"[*] Daily State Initialized -> Baseline Equity: ${self.starting_daily_equity:,.2f} (Inferred from Deals PnL: ${today_realized_pnl:+.2f})")

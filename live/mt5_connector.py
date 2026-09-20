@@ -8,6 +8,7 @@ dan manajemen error broker.
 
 from dataclasses import dataclass
 from typing import Optional, List, Dict, Any
+import sys
 import datetime
 import concurrent.futures
 import numpy as np
@@ -250,10 +251,16 @@ class MT5Connector:
             return res
         except concurrent.futures.TimeoutError:
             print(f"[💥 IPC TIMEOUT] mt5.order_send() melampaui batas waktu {timeout_sec}s! Thread dilepaskan tanpa blokir (wait=False).")
-            executor.shutdown(wait=False, cancel_futures=True)
+            if sys.version_info >= (3, 9):
+                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=False)
             return None
         except Exception as e:
-            executor.shutdown(wait=False, cancel_futures=True)
+            if sys.version_info >= (3, 9):
+                executor.shutdown(wait=False, cancel_futures=True)
+            else:
+                executor.shutdown(wait=False)
             return None
 
     def get_open_positions(self, magic: int = lcfg.MAGIC_NUMBER) -> List[Any]:
@@ -354,6 +361,27 @@ class MT5Connector:
 
         if sl is not None and sl > 0:
             request["sl"] = float(round(sl, digits))
+
+        # Validasi arah TP & Stops Level Broker (Defense-in-depth: Inverted TP Guard)
+        if tp is not None and tp > 0:
+            point = sym_info.point if sym_info else 0.01
+            stops_level_dist = (sym_info.stops_level * point) if (sym_info and hasattr(sym_info, "stops_level")) else 0.0
+
+            if is_buy:
+                if tp <= price:
+                    print(f"[⚠️ INVERTED TP BLOCKED] BUY TP ({tp:.2f}) <= Entry ({price:.2f}). Hard TP dibatalkan demi keamanan.")
+                    tp = None
+                elif stops_level_dist > 0 and (tp - price) < stops_level_dist:
+                    print(f"[⚠️ TP STOPS LEVEL] BUY TP jarak ({tp - price:.2f}) < broker stops_level ({stops_level_dist:.2f}). Hard TP dibatalkan.")
+                    tp = None
+            else:
+                if tp >= price:
+                    print(f"[⚠️ INVERTED TP BLOCKED] SELL TP ({tp:.2f}) >= Entry ({price:.2f}). Hard TP dibatalkan demi keamanan.")
+                    tp = None
+                elif stops_level_dist > 0 and (price - tp) < stops_level_dist:
+                    print(f"[⚠️ TP STOPS LEVEL] SELL TP jarak ({price - tp:.2f}) < broker stops_level ({stops_level_dist:.2f}). Hard TP dibatalkan.")
+                    tp = None
+
         if tp is not None and tp > 0:
             request["tp"] = float(round(tp, digits))
 
@@ -408,6 +436,16 @@ class MT5Connector:
 
         if sl is not None and sl > 0:
             request["sl"] = float(round(sl, digits))
+
+        # Validasi arah TP pada Pending Order (Inverted TP Guard)
+        if tp is not None and tp > 0:
+            if is_buy_stop and tp <= order_price:
+                print(f"[⚠️ INVERTED TP BLOCKED] BUY_STOP TP ({tp:.2f}) <= Order Price ({order_price:.2f}). Hard TP dibatalkan.")
+                tp = None
+            elif (not is_buy_stop) and tp >= order_price:
+                print(f"[⚠️ INVERTED TP BLOCKED] SELL_STOP TP ({tp:.2f}) >= Order Price ({order_price:.2f}). Hard TP dibatalkan.")
+                tp = None
+
         if tp is not None and tp > 0:
             request["tp"] = float(round(tp, digits))
 

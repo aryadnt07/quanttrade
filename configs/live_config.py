@@ -173,7 +173,7 @@ ROOT_DIR                = str(Path(__file__).resolve().parent.parent)
 PID_LOCK_FILE           = os.path.join(ROOT_DIR, "bot.lock")
 ORDER_TIMEOUT_SEC       = _get_env_float("ORDER_TIMEOUT_SEC", 10.0)
 MAX_DAILY_LOSS_PCT      = _get_env_float("MAX_DAILY_LOSS_PCT", 0.05)   # 5.0% max daily portfolio drawdown
-BROKER_SERVER_OFFSET_HOURS = _get_env_int("BROKER_SERVER_OFFSET_HOURS", 999) # 999 = auto-detect
+BROKER_SERVER_OFFSET_HOURS = _get_env_int("BROKER_SERVER_OFFSET_HOURS", 0) # 0 = Exness (UTC+0), IC Markets: 2 (Winter) / 3 (Summer)
 
 # Asia Mean Reversion Exit Parameters (100% Parity dengan asia_config.py)
 ASIA_Z_EXIT_THRESHOLD   = 0.5                      # TP threshold: [-0.5, 0.5] (Backtest parity)
