@@ -114,7 +114,7 @@ def main():
     parser_ps.add_argument("--save-chart", type=str, default="output/sensitivity_surface_dashboard.png", help="Path output chart")
 
     # ── 10. LIVE CHECK (PRE-EXECUTION SYSTEM DIAGNOSTIC) ──
-    parser_live_check = subparsers.add_parser("live-check", help="Jalankan uji kesiapan & diagnostik menyeluruh sistem live (8 tahap)")
+    parser_live_check = subparsers.add_parser("live-check", help="Jalankan uji kesiapan & diagnostik menyeluruh sistem live (10 tahap)")
 
     # ── 11. TELEGRAM TEST ──
     parser_tg = subparsers.add_parser("telegram-test", help="Uji koneksi dan pengiriman notifikasi ke Telegram Bot")
