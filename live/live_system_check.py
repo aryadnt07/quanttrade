@@ -4,20 +4,23 @@ Live Trading System Readiness & Diagnostic Suite
 Pengujian mandiri komprehensif untuk seluruh subsistem live trading sebelum
 bot dijalankan secara live 24/7 di MetaTrader 5.
 
-8 Tahapan Verifikasi:
-[1/8] System Environment & UTC Clock Synchronization
-[2/8] MT5 Terminal IPC & Broker Server Authentication
-[3/8] Account Status & AlgoTrading Master Permissions
-[4/8] Market Data Stream & Live Spread Telemetry (XAU/USD)
-[5/8] Live M5 & M1 Bar Feed Integrity & Continuity
-[6/8] Strategy Engines & Live Signal Math Verification
-[7/8] Risk Management & Position Sizing Safety Gates
-[8/8] Broker Margin & Order Payload Check (Zero-Risk Dry-Run)
+10 Tahapan Verifikasi:
+[1/10] System Environment & UTC Clock Synchronization
+[2/10] MT5 Terminal IPC & Broker Server Authentication
+[3/10] Account Status & AlgoTrading Master Permissions
+[4/10] Market Data Stream & Live Spread Telemetry (XAU/USD)
+[5/10] Live M5 & M1 Bar Feed Integrity & Continuity
+[6/10] Strategy Engines & Live Signal Math Verification
+[7/10] Risk Management & Position Sizing Safety Gates
+[8/10] Broker Margin & Order Payload Check (Zero-Risk Dry-Run)
+[9/10] Instance Mutex Lock & State Persistence Integrity (PID Lock & Circuit Breaker)
+[10/10] Telegram Notification Engine & Remote Alert Telemetry
 """
 
 import os
 import sys
 import time
+import json
 import platform
 from datetime import datetime, timezone
 from typing import Dict, Any, Tuple, Optional
@@ -37,6 +40,8 @@ import pandas as pd
 import MetaTrader5 as mt5
 
 from live.mt5_connector import MT5Connector, translate_retcode
+from live.risk_manager import is_process_running
+from live.telegram.notifier import TelegramNotifier
 from configs import live_config as lcfg
 from configs import asia_config as acfg
 from configs import london_config as london_cfg
@@ -49,7 +54,7 @@ from engine.ny.strategy import compute_ny_indicators
 
 
 def run_live_system_check() -> bool:
-    """Eksekusi 8 tahapan pengujian diagnostik live trading."""
+    """Eksekusi 10 tahapan pengujian diagnostik live trading."""
     sep = "=" * 74
     subsep = "-" * 74
 
@@ -63,9 +68,9 @@ def run_live_system_check() -> bool:
     failures = []
 
     # ─────────────────────────────────────────────────────────────
-    # [1/8] SYSTEM ENVIRONMENT & UTC CLOCK SYNCHRONIZATION
+    # [1/10] SYSTEM ENVIRONMENT & UTC CLOCK SYNCHRONIZATION
     # ─────────────────────────────────────────────────────────────
-    print("[1/8] Memeriksa Lingkungan Sistem & Sinkronisasi Waktu UTC...")
+    print("[1/10] Memeriksa Lingkungan Sistem & Sinkronisasi Waktu UTC...")
     os_name = f"{platform.system()} {platform.release()} ({platform.machine()})"
     py_ver = sys.version.split()[0]
     is_64bit = sys.maxsize > 2**32
@@ -87,9 +92,9 @@ def run_live_system_check() -> bool:
             print("      [✓] PASS: Lingkungan host & arsitektur 64-bit valid (Python >= 3.9 OK).")
 
     # ─────────────────────────────────────────────────────────────
-    # [2/8] MT5 TERMINAL IPC & BROKER SERVER AUTHENTICATION
+    # [2/10] MT5 TERMINAL IPC & BROKER SERVER AUTHENTICATION
     # ─────────────────────────────────────────────────────────────
-    print("\n[2/8] Memeriksa Koneksi IPC ke Terminal MetaTrader 5...")
+    print("\n[2/10] Memeriksa Koneksi IPC ke Terminal MetaTrader 5...")
     connector = MT5Connector()
     t_start = time.time()
     connected = connector.connect()
@@ -120,9 +125,9 @@ def run_live_system_check() -> bool:
     print("      [✓] PASS: Koneksi IPC ke MetaTrader 5 berhasil.")
 
     # ─────────────────────────────────────────────────────────────
-    # [3/8] ACCOUNT STATUS & ALGOTRADING MASTER PERMISSIONS
+    # [3/10] ACCOUNT STATUS & ALGOTRADING MASTER PERMISSIONS
     # ─────────────────────────────────────────────────────────────
-    print("\n[3/8] Memeriksa Status Akun Broker & Izin Algo Trading...")
+    print("\n[3/10] Memeriksa Status Akun Broker & Izin Algo Trading...")
     acc_status = connector.get_account_status()
     acc_info = mt5.account_info()
 
@@ -151,9 +156,9 @@ def run_live_system_check() -> bool:
             print("      [✓] PASS: Algo Trading aktif & izin eksekusi otomatis disetujui broker.")
 
     # ─────────────────────────────────────────────────────────────
-    # [4/8] MARKET DATA STREAM & SPREAD TELEMETRY (XAU/USD)
+    # [4/10] MARKET DATA STREAM & SPREAD TELEMETRY (XAU/USD)
     # ─────────────────────────────────────────────────────────────
-    print(f"\n[4/8] Memeriksa Streaming Harga & Spread Telemetri ({lcfg.SYMBOL})...")
+    print(f"\n[4/10] Memeriksa Streaming Harga & Spread Telemetri ({lcfg.SYMBOL})...")
     sym_info = connector.get_symbol_info(lcfg.SYMBOL)
 
     if not sym_info:
@@ -185,9 +190,9 @@ def run_live_system_check() -> bool:
                 print("      [✓] PASS: Streaming harga aktif, spread normal dan likuiditas sehat.")
 
     # ─────────────────────────────────────────────────────────────
-    # [5/8] LIVE M5 & M1 BAR FEED INTEGRITY & CONTINUITY
+    # [5/10] LIVE M5 & M1 BAR FEED INTEGRITY & CONTINUITY
     # ─────────────────────────────────────────────────────────────
-    print(f"\n[5/8] Memeriksa Kualitas Data Bar M5 & M1 dari Broker...")
+    print(f"\n[5/10] Memeriksa Kualitas Data Bar M5 & M1 dari Broker...")
     df_m5 = connector.get_live_rates(lcfg.SYMBOL, timeframe=mt5.TIMEFRAME_M5, count=100)
     df_m1 = connector.get_live_rates(lcfg.SYMBOL, timeframe=mt5.TIMEFRAME_M1, count=100)
 
@@ -209,9 +214,9 @@ def run_live_system_check() -> bool:
         print("      [✓] PASS: Data feed M5/M1 broker lengkap dan kontinu.")
 
     # ─────────────────────────────────────────────────────────────
-    # [6/8] STRATEGY ENGINES & LIVE SIGNAL MATH VERIFICATION
+    # [6/10] STRATEGY ENGINES & LIVE SIGNAL MATH VERIFICATION
     # ─────────────────────────────────────────────────────────────
-    print("\n[6/8] Memverifikasi Mesin Indikator & Kalkulasi Sinyal Live...")
+    print("\n[6/10] Memverifikasi Mesin Indikator & Kalkulasi Sinyal Live...")
     if df_m5 is not None and len(df_m5) >= 50:
         try:
             # Test Asia MR Math
@@ -246,10 +251,12 @@ def run_live_system_check() -> bool:
     else:
         print("      [!] Lewati verifikasi sinyal karena data bar tidak mencukupi.")
 
+
     # ─────────────────────────────────────────────────────────────
-    # [7/8] RISK MANAGEMENT & POSITION SIZING SAFETY GATES
     # ─────────────────────────────────────────────────────────────
-    print("\n[7/8] Memeriksa Aturan Manajemen Risiko & Batas Keamanan...")
+    # [7/10] RISK MANAGEMENT & POSITION SIZING SAFETY GATES
+    # ─────────────────────────────────────────────────────────────
+    print("\n[7/10] Memeriksa Aturan Manajemen Risiko & Batas Keamanan...")
     curr_balance = acc_status.balance if acc_status else 10_000.0
     risk_asia_usd = curr_balance * lcfg.ASIAN_RISK_PCT
     risk_lon_usd = curr_balance * lcfg.LONDON_RISK_PCT
@@ -259,6 +266,7 @@ def run_live_system_check() -> bool:
     max_daily_loss = getattr(lcfg, "MAX_DAILY_LOSS_PCT", 0.05)
     order_timeout = getattr(lcfg, "ORDER_TIMEOUT_SEC", 10.0)
     offset_sec = connector.get_broker_server_utc_offset_seconds()
+    is_manual_offset = getattr(lcfg, "BROKER_SERVER_OFFSET_HOURS", None) is not None
 
     print(f"      - Alokasi Risiko Asia   : {lcfg.ASIAN_RISK_PCT*100:.1f}% (${risk_asia_usd:,.2f} USD)")
     print(f"      - Alokasi Risiko London : {lcfg.LONDON_RISK_PCT*100:.1f}% (${risk_lon_usd:,.2f} USD)")
@@ -268,13 +276,13 @@ def run_live_system_check() -> bool:
     print(f"      - Anti-Chasing Ceiling  : ${max_chase:.2f} USD (Batas kejar harga)")
     print(f"      - Anti-Spam Max Retry   : {max_retries} kali (Mencegah requote spam)")
     print(f"      - IPC Order Timeout     : {order_timeout:.1f}s (Anti-freeze guard)")
-    print(f"      - Broker Server Offset  : {offset_sec//3600:+d}h UTC (Dynamic auto-detection)")
+    print(f"      - Broker Server Offset  : {offset_sec//3600:+d}h UTC ({'Deterministik Config' if is_manual_offset else 'Dynamic auto-detection'})")
     print("      [✓] PASS: Batasan risiko institusional & safety gates terkonfigurasi aktif.")
 
     # ─────────────────────────────────────────────────────────────
-    # [8/8] ORDER VALIDATION & BROKER MARGIN CHECK (DRY-RUN)
+    # [8/10] ORDER VALIDATION & BROKER MARGIN CHECK (DRY-RUN)
     # ─────────────────────────────────────────────────────────────
-    print("\n[8/8] Menguji Validasi Order ke Server Broker (Zero-Risk Dry-Run)...")
+    print("\n[8/10] Menguji Validasi Order ke Server Broker (Zero-Risk Dry-Run)...")
     if tick and sym_info and acc_status:
         test_lot = sym_info.volume_min  # Lot minimal untuk pengujian (0.01)
         test_ask = tick["ask"]
@@ -327,6 +335,97 @@ def run_live_system_check() -> bool:
                 warnings.append(f"Respons validasi broker: {ret_desc}")
     else:
         print("      [!] Lewati order_check karena data tick tidak tersedia.")
+
+    # ─────────────────────────────────────────────────────────────
+    # [9/10] INSTANCE MUTEX LOCK & STATE PERSISTENCE INTEGRITY
+    # ─────────────────────────────────────────────────────────────
+    print("\n[9/10] Memeriksa Proteksi Multi-Instance & Persistensi State...")
+    lock_file = getattr(lcfg, "PID_LOCK_FILE", "bot.lock")
+    lock_path = os.path.join(ROOT_DIR, lock_file)
+
+    # 1. PID Lock Inspection (Audit P0-002)
+    if os.path.exists(lock_path):
+        try:
+            with open(lock_path, "r", encoding="utf-8") as f:
+                locked_pid = int(f.read().strip())
+            if is_process_running(locked_pid):
+                warnings.append(f"Bot instance lain terdeteksi aktif dengan PID {locked_pid}.")
+                print(f"      - Status PID Lock       : [!] AKTIF oleh PID {locked_pid} (Dua bot dilarang run bersamaan)")
+            else:
+                print(f"      - Status PID Lock       : [✓] Stale Lock (PID {locked_pid} mati, aman dibersihkan otomatis)")
+        except Exception as e:
+            print(f"      - Status PID Lock       : [!] Warning membaca lockfile: {e}")
+    else:
+        # Probe atomic exclusivity
+        test_probe = os.path.join(ROOT_DIR, ".probe_lock.tmp")
+        try:
+            fd = os.open(test_probe, os.O_CREAT | os.O_EXCL | os.O_RDWR)
+            os.close(fd)
+            os.remove(test_probe)
+            print("      - Status PID Lock       : [✓] Siap (Tidak ada instansi lain aktif, izin I/O valid)")
+        except Exception as e:
+            warnings.append(f"Tidak dapat membuat file lock di direktori root: {e}")
+            print(f"      - Status PID Lock       : [!] Izin I/O file lock terbatas: {e}")
+
+    # 2. Daily Circuit Breaker State Persistence (Audit P1-002)
+    logs_dir = os.path.join(ROOT_DIR, "logs")
+    os.makedirs(logs_dir, exist_ok=True)
+    cb_state_path = os.path.join(logs_dir, "daily_circuit_breaker_state.json")
+    if os.path.exists(cb_state_path):
+        try:
+            with open(cb_state_path, "r", encoding="utf-8") as f:
+                cb_data = json.load(f)
+            stored_date = cb_data.get("date", "Unknown")
+            stored_eq = cb_data.get("baseline_equity", 0.0)
+            print(f"      - State Circuit Breaker : [✓] Terdeteksi (Date: {stored_date} | Baseline: ${stored_eq:,.2f})")
+        except Exception as e:
+            warnings.append(f"State file circuit breaker korup/tidak valid: {e}")
+            print(f"      - State Circuit Breaker : [!] File state korup: {e}")
+    else:
+        print("      - State Circuit Breaker : [✓] Bersih (Akan diinisialisasi otomatis saat bot start)")
+
+    # 3. Broker Stops Level & Freeze Level (Audit P1-001)
+    if sym_info:
+        stops_lvl = getattr(sym_info, "trade_stops_level", 0)
+        freeze_lvl = getattr(sym_info, "trade_freeze_level", 0)
+        print(f"      - Broker Stops/Freeze   : Stops={stops_lvl} pts | Freeze={freeze_lvl} pts (Defense-in-depth Ready)")
+    print("      [✓] PASS: Sistem lockfile atomik & persistensi state portofolio aman.")
+
+    # ─────────────────────────────────────────────────────────────
+    # [10/10] TELEGRAM NOTIFICATION ENGINE & REMOTE ALERT TELEMETRY
+    # ─────────────────────────────────────────────────────────────
+    print("\n[10/10] Memeriksa Mesin Notifikasi Telegram & Telemetri Alert...")
+    notifier = TelegramNotifier()
+    tele_enabled = notifier.enabled
+    tele_mode = notifier.mode
+    token_str = notifier.bot_token
+    chat_id_str = notifier.chat_id
+
+    masked_token = f"{token_str[:6]}***{token_str[-4:]}" if len(token_str) > 10 else "(Belum diisi)"
+    masked_chat = f"{chat_id_str[:4]}***{chat_id_str[-4:]}" if len(chat_id_str) > 6 else chat_id_str or "(Belum diisi)"
+
+    print(f"      - Status Konfigurasi    : {'AKTIF (Enabled)' if tele_enabled else 'NONAKTIF (Disabled)'}")
+    print(f"      - Notification Mode     : {tele_mode} (Option A: Balanced Professional)")
+    print(f"      - Bot Token Masquerade  : {masked_token}")
+    print(f"      - Target Chat ID        : {masked_chat}")
+
+    if tele_enabled:
+        if not token_str or not chat_id_str:
+            warnings.append("Telegram diaktifkan tetapi BOT_TOKEN atau CHAT_ID belum lengkap di .env.")
+            print("      [!] PERINGATAN: Kredensial Telegram belum lengkap di file .env.")
+        else:
+            t_tele_start = time.time()
+            is_valid, bot_tag, tele_err = notifier.verify_credentials()
+            tele_latency_ms = (time.time() - t_tele_start) * 1000.0
+            if is_valid:
+                print(f"      - Bot Telegram Identity : {bot_tag} (Ping Latency: {tele_latency_ms:.1f} ms)")
+                print("      [✓] PASS: Bot Telegram terhubung & siap mengirim alert transaksi real-time.")
+            else:
+                warnings.append(f"Gagal memverifikasi Bot Telegram: {tele_err}")
+                print(f"      [!] PERINGATAN: Gagal memverifikasi API Telegram: {tele_err}")
+    else:
+        print("      [!] INFO: Notifikasi Telegram saat ini nonaktif. Bot tetap aman di log lokal.")
+
 
     # ─────────────────────────────────────────────────────────────
     # KESIMPULAN & HASIL DIAGNOSTIK

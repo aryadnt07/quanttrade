@@ -16,7 +16,7 @@ import json
 import urllib.request
 import urllib.parse
 from datetime import datetime, timezone
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 
 if sys.platform == "win32":
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")
@@ -50,6 +50,33 @@ class TelegramNotifier:
     def is_configured(self) -> bool:
         """Cek apakah kredensial Telegram sudah terisi dan aktif."""
         return self.enabled and bool(self.bot_token) and bool(self.chat_id) and (self.mode != "OFF")
+
+    def verify_credentials(self) -> Tuple[bool, Optional[str], Optional[str]]:
+        """
+        Verifikasi keabsahan Bot Token langsung ke endpoint resmi Telegram (getMe)
+        tanpa mengirimkan pesan spam ke ruang obrolan (chat).
+
+        Returns:
+            Tuple (is_valid, bot_username, error_message)
+        """
+        if not self.bot_token:
+            return False, None, "Bot token kosong"
+        url = f"https://api.telegram.org/bot{self.bot_token}/getMe"
+        try:
+            req = urllib.request.Request(url, method="GET")
+            with urllib.request.urlopen(req, timeout=6.0) as resp:
+                if resp.status == 200:
+                    data = json.loads(resp.read().decode("utf-8"))
+                    if data.get("ok"):
+                        res = data.get("result", {})
+                        username = res.get("username", "")
+                        first_name = res.get("first_name", "")
+                        tag = f"@{username}" if username else first_name
+                        return True, tag, None
+                    return False, None, f"Telegram API error: {data.get('description', 'Unknown')}"
+                return False, None, f"HTTP Error status {resp.status}"
+        except Exception as e:
+            return False, None, str(e)
 
     def send_message(self, text: str) -> bool:
         """Kirim pesan teks berformat HTML ke Telegram secara aman (fail-safe)."""
