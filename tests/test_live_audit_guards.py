@@ -36,8 +36,11 @@ class TestLiveAuditGuards(unittest.TestCase):
                 os.remove(self.test_lock_file)
             except OSError:
                 pass
+        self.patcher_tg = patch("live.telegram.notifier.TelegramNotifier.send_message", return_value=True)
+        self.patcher_tg.start()
 
     def tearDown(self):
+        self.patcher_tg.stop()
         if os.path.exists(self.test_lock_file):
             try:
                 os.remove(self.test_lock_file)
