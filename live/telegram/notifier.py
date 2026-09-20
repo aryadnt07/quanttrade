@@ -12,6 +12,7 @@ Didesain untuk ketenangan mental trader (Option A: Balanced Professional Mode):
 
 import os
 import sys
+import ssl
 import json
 import urllib.request
 import urllib.parse
@@ -29,6 +30,27 @@ try:
     from configs import live_config as lcfg
 except ImportError:
     from live import live_config as lcfg
+
+
+def _create_robust_ssl_context() -> Optional[ssl.SSLContext]:
+    """
+    Menyediakan SSL Context yang tangguh di lingkungan Windows Server / VPS
+    yang mungkin kekurangan sertifikat Root CA atau berada di balik self-signed proxy.
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        pass
+    try:
+        ctx = ssl.create_default_context()
+        return ctx
+    except Exception:
+        pass
+    try:
+        return ssl._create_unverified_context()
+    except Exception:
+        return None
 
 
 class TelegramNotifier:
@@ -62,9 +84,11 @@ class TelegramNotifier:
         if not self.bot_token:
             return False, None, "Bot token kosong"
         url = f"https://api.telegram.org/bot{self.bot_token}/getMe"
+        req = urllib.request.Request(url, method="GET")
+        ctx = _create_robust_ssl_context()
+
         try:
-            req = urllib.request.Request(url, method="GET")
-            with urllib.request.urlopen(req, timeout=6.0) as resp:
+            with urllib.request.urlopen(req, timeout=6.0, context=ctx) as resp:
                 if resp.status == 200:
                     data = json.loads(resp.read().decode("utf-8"))
                     if data.get("ok"):
@@ -76,6 +100,21 @@ class TelegramNotifier:
                     return False, None, f"Telegram API error: {data.get('description', 'Unknown')}"
                 return False, None, f"HTTP Error status {resp.status}"
         except Exception as e:
+            # Toleransi jika Windows Server memblokir verifikasi sertifikat SSL
+            if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                try:
+                    unverified_ctx = ssl._create_unverified_context()
+                    with urllib.request.urlopen(req, timeout=6.0, context=unverified_ctx) as resp:
+                        if resp.status == 200:
+                            data = json.loads(resp.read().decode("utf-8"))
+                            if data.get("ok"):
+                                res = data.get("result", {})
+                                username = res.get("username", "")
+                                first_name = res.get("first_name", "")
+                                tag = f"@{username}" if username else first_name
+                                return True, tag, None
+                except Exception as inner_e:
+                    return False, None, str(inner_e)
             return False, None, str(e)
 
     def send_message(self, text: str) -> bool:
@@ -91,22 +130,31 @@ class TelegramNotifier:
             "disable_web_page_preview": True,
         }
 
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            url,
+            data=data,
+            headers={"Content-Type": "application/json; charset=utf-8"},
+            method="POST",
+        )
+        ctx = _create_robust_ssl_context()
+
         try:
-            data = json.dumps(payload).encode("utf-8")
-            req = urllib.request.Request(
-                url,
-                data=data,
-                headers={"Content-Type": "application/json; charset=utf-8"},
-                method="POST",
-            )
-            with urllib.request.urlopen(req, timeout=6.0) as resp:
+            with urllib.request.urlopen(req, timeout=6.0, context=ctx) as resp:
                 if resp.status == 200:
                     return True
                 return False
         except Exception as e:
-            # Kegagalan jaringan atau token invalid dicatat di log tanpa memicu crash bot
+            if "CERTIFICATE_VERIFY_FAILED" in str(e):
+                try:
+                    unverified_ctx = ssl._create_unverified_context()
+                    with urllib.request.urlopen(req, timeout=6.0, context=unverified_ctx) as resp:
+                        return resp.status == 200
+                except Exception:
+                    pass
             print(f"[⚠️ TELEGRAM WARNING] Gagal mengirim pesan ke Telegram: {e}")
             return False
+
 
     # ─────────────────────────────────────────────────────────────
     # TEMPLATE NOTIFIKASI BALANCED PROFESSIONAL (OPTION A)
