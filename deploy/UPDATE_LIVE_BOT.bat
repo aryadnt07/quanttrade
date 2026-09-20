@@ -10,6 +10,7 @@ echo [1/4] Menghentikan bot yang sedang berjalan...
 taskkill /F /FI "WINDOWTITLE eq QuantTrade - Institutional Live Bot*" /T >nul 2>&1
 
 echo [2/4] Mengambil pembaruan terbaru dari GitHub (git pull)...
+git stash >nul 2>&1
 git pull origin main
 if %ERRORLEVEL% NEQ 0 (
     echo.
