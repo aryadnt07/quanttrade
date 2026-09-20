@@ -65,11 +65,11 @@ class RiskManagementMixin:
                     existing_pid = int(content)
                     if running_checker(existing_pid) and existing_pid != current_pid:
                         err_msg = (
-                            "\n" + "!" * 76 + "\n"
+                            f"\n{'!' * 76}\n"
                             f"  [💥 DUAL INSTANCE DETECTED] Instance bot lain sedang aktif dengan PID {existing_pid}!\n"
                             f"  Dua bot dilarang berjalan bersamaan untuk mencegah duplicate orders (P0-002).\n"
                             f"  Jika ingin merestart, hentikan proses PID {existing_pid} terlebih dahulu.\n"
-                            "!" * 76 + "\n"
+                            f"{'!' * 76}\n"
                         )
                         print(err_msg)
                         self.logger.critical(f"[💥 DUAL INSTANCE BLOCKED] Bot lain dengan PID {existing_pid} sedang aktif.")

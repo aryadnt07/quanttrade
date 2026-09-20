@@ -7,6 +7,15 @@ echo    QUANTTRADE - 1-CLICK PRODUCTION AUTO-UPDATER
 echo ================================================================
 echo.
 echo [1/4] Menghentikan bot yang sedang berjalan...
+if exist bot.lock (
+    set /p BOT_PID=<bot.lock
+    if defined BOT_PID (
+        echo [*] Menghentikan bot aktif dengan PID %BOT_PID%...
+        taskkill /F /PID %BOT_PID% /T >nul 2>&1
+        timeout /t 1 >nul
+        del /f /q bot.lock >nul 2>&1
+    )
+)
 taskkill /F /FI "WINDOWTITLE eq QuantTrade - Institutional Live Bot*" /T >nul 2>&1
 
 echo [2/4] Mengambil pembaruan terbaru dari GitHub (git pull)...
