@@ -48,6 +48,7 @@ from src.execution.scheduler import SessionScheduleManager
 from src.execution.executors.asia import AsiaLiveStrategy, AsiaExecutorMixin
 from src.execution.executors.london import LondonLiveStrategy, LondonExecutorMixin
 from src.execution.executors.ny import NYLiveStrategy, NYExecutorMixin
+from src.execution.audit_engine import SessionReconciliationAuditor
 
 
 class _StrategyStateProxy(dict):
@@ -534,25 +535,54 @@ class LivePortfolioTrader:
         old_phase = self._current_phase
         self._current_phase = phase_key
 
-        # 1. Notifikasi Penutupan Sesi Lama (Cutoff / Window Ended)
-        if old_phase == "ASIA_WINDOW":
-            self.telegram.notify_session_close(
-                session_name="Asian Mean Reversion",
-                trades_executed_today=bool(self.trades_today.get("ASIAN", False)),
-                next_session_info=f"London OR pukul {sched.get('LONDON_OR_START', (8, 0))[0]:02d}:{sched.get('LONDON_OR_START', (8, 0))[1]:02d} UTC",
+        # 1. Notifikasi Penutupan Sesi Lama (Cutoff / Window Ended) dengan Shadow Backtest Audit
+        if old_phase in ("ASIA_WINDOW", "LONDON_ENTRY", "NY_ENTRY"):
+            session_key = "ASIAN" if old_phase == "ASIA_WINDOW" else ("LONDON" if old_phase == "LONDON_ENTRY" else "NY")
+            live_count = 1 if self.trades_today.get(session_key, False) else 0
+
+            # Tarik data candle M5 terkini dari broker untuk audit rekonsiliasi
+            df_m5_audit = None
+            try:
+                if hasattr(self.connector, "get_live_rates"):
+                    df_m5_audit = self.connector.get_live_rates(symbol=lcfg.SYMBOL, timeframe=mt5.TIMEFRAME_M5, count=300)
+                elif hasattr(self.connector, "get_recent_candles"):
+                    df_m5_audit = self.connector.get_recent_candles(symbol=lcfg.SYMBOL, timeframe=mt5.TIMEFRAME_M5, count=300)
+            except Exception as e:
+                self.logger.warning(f"[⚠️ AUDIT ERROR] Gagal mengambil candle M5 untuk audit: {e}")
+
+            audit_rep = SessionReconciliationAuditor.audit_session(
+                session_id=session_key,
+                df_m5=df_m5_audit,
+                today_date=now_utc.date(),
+                live_trades_count=live_count,
+                sched=sched,
             )
-        elif old_phase == "LONDON_ENTRY":
-            self.telegram.notify_session_close(
-                session_name="London Pit ORB",
-                trades_executed_today=bool(self.trades_today.get("LONDON", False)),
-                next_session_info=f"New York OR pukul {sched.get('NY_OR_START', (13, 30))[0]:02d}:{sched.get('NY_OR_START', (13, 30))[1]:02d} UTC",
+            self.logger.info(
+                f"[🔍 SHADOW AUDIT {session_key}] Paritas: {'MATCH' if audit_rep.parity_matched else 'DIVERGENCE'} "
+                f"| Live: {audit_rep.live_trades_count} | Backtest: {audit_rep.backtest_signals_count} | {audit_rep.primary_reason}"
             )
-        elif old_phase == "NY_ENTRY":
-            self.telegram.notify_session_close(
-                session_name=f"New York ORB ({sched.get('NY_TZ_NAME', 'UTC')})",
-                trades_executed_today=bool(self.trades_today.get("NY", False)),
-                next_session_info="Asian Session besok pukul 01:00 UTC",
-            )
+
+            if old_phase == "ASIA_WINDOW":
+                self.telegram.notify_session_close(
+                    session_name="Asian Mean Reversion",
+                    trades_executed_today=bool(self.trades_today.get("ASIAN", False)),
+                    next_session_info=f"London OR pukul {sched.get('LONDON_OR_START', (8, 0))[0]:02d}:{sched.get('LONDON_OR_START', (8, 0))[1]:02d} UTC",
+                    audit_report=audit_rep,
+                )
+            elif old_phase == "LONDON_ENTRY":
+                self.telegram.notify_session_close(
+                    session_name="London Pit ORB",
+                    trades_executed_today=bool(self.trades_today.get("LONDON", False)),
+                    next_session_info=f"New York OR pukul {sched.get('NY_OR_START', (13, 30))[0]:02d}:{sched.get('NY_OR_START', (13, 30))[1]:02d} UTC",
+                    audit_report=audit_rep,
+                )
+            elif old_phase == "NY_ENTRY":
+                self.telegram.notify_session_close(
+                    session_name=f"New York ORB ({sched.get('NY_TZ_NAME', 'UTC')})",
+                    trades_executed_today=bool(self.trades_today.get("NY", False)),
+                    next_session_info="Asian Session besok pukul 01:00 UTC",
+                    audit_report=audit_rep,
+                )
 
         # 2. Notifikasi Pembukaan Sesi Baru
         if phase_key in ("ASIA_WINDOW", "LONDON_OR", "LONDON_ENTRY", "NY_OR", "NY_ENTRY"):

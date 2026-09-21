@@ -62,12 +62,13 @@ class MockTelegramNotifier:
         })
         return True
 
-    def notify_session_close(self, session_name, trades_executed_today=False, next_session_info=""):
+    def notify_session_close(self, session_name, trades_executed_today=False, next_session_info="", audit_report=None):
         self.events.append({
             "type": "session_close",
             "session_name": session_name,
             "trades_executed_today": trades_executed_today,
             "next_session_info": next_session_info,
+            "audit_report": audit_report,
         })
         return True
 

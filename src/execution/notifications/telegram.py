@@ -337,18 +337,30 @@ class TelegramNotifier:
         session_name: str,
         trades_executed_today: bool = False,
         next_session_info: str = "",
+        audit_report: Optional[Any] = None,
     ) -> bool:
-        """Kirim notifikasi saat sesi trading berakhir."""
+        """Kirim notifikasi saat sesi trading berakhir beserta audit paritas backtest."""
         now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        trade_status = "Eksekusi Dilakukan" if trades_executed_today else "Tidak Ada Trade / Flat"
+        trade_status = "Eksekusi Dilakukan (1 Trade Selesai)" if trades_executed_today else "Flat (0 Trade)"
+
+        audit_text = ""
+        if audit_report:
+            parity_badge = "✅ 100% PARITY MATCH" if audit_report.parity_matched else "⚠️ DIVERGENCE DETECTED"
+            audit_text = (
+                f"• <b>Audit Paritas:</b> <code>{parity_badge}</code>\n"
+                f"  - <b>Live:</b> <code>{audit_report.live_trades_count} Trade</code> | <b>Backtest:</b> <code>{audit_report.backtest_signals_count} Trade</code>\n"
+                f"  - <b>Candle M5:</b> <code>{audit_report.bars_evaluated} bar dievaluasi</code>\n"
+                f"  - <b>Analisis Pasar:</b> {audit_report.primary_reason}\n"
+            )
 
         msg = (
             f"<b>🌙 [SESSION CLOSE] {session_name}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"• <b>Status:</b> Sesi telah ditutup (Cutoff / Window Ended)\n"
+            f"• <b>Status Sesi:</b> Cutoff Time Tercapai\n"
             f"• <b>Hasil Sesi:</b> <code>{trade_status}</code>\n"
+            + (audit_text if audit_text else "")
             + (f"• <b>Sesi Berikutnya:</b> <code>{next_session_info}</code>\n" if next_session_info else "")
-            + f"• <b>Waktu:</b> <code>{now_str}</code>"
+            + f"• <b>Timestamp:</b> <code>{now_str}</code>"
         )
         return self.send_message(msg)
 
