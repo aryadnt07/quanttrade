@@ -371,7 +371,7 @@ class MT5Connector:
         result = self._safe_order_send(request)
         if result is None:
             err = mt5.last_error()
-            return OrderResult(False, -4, 0, 0.0, 0.0, f"Order send failed: {err}")
+            return OrderResult(False, -10008, 0, 0.0, 0.0, f"IPC Timeout / State Unknown: {err}")
 
         desc = translate_retcode(result.retcode)
         if result.retcode != mt5.TRADE_RETCODE_DONE:
@@ -434,7 +434,7 @@ class MT5Connector:
         result = self._safe_order_send(request)
         if result is None:
             err = mt5.last_error()
-            return OrderResult(False, -4, 0, 0.0, 0.0, f"Pending order send failed: {err}")
+            return OrderResult(False, -10008, 0, 0.0, 0.0, f"IPC Timeout / State Unknown: {err}")
 
         desc = translate_retcode(result.retcode)
         if result.retcode != mt5.TRADE_RETCODE_DONE:

@@ -35,7 +35,7 @@ from src.observability.logger import get_logger, disable_quick_edit_mode, TradeJ
 
 # Domain interfaces and types
 from src.core.interfaces import IBroker, ILiveStrategy
-from src.core.types import OrderIntent, ExitIntent, Direction as AsianDirection
+from src.core.types import OrderIntent, ExitIntent, OrderResult, Direction as AsianDirection
 from src.strategies.asian_mr.signals import (
     compute_asian_indicators,
     check_entry_signal as check_asian_entry,
@@ -329,14 +329,98 @@ class LivePortfolioTrader:
     # ─────────────────────────────────────────────────────────────
     # ORDER DISPATCH & POLYMORPHIC TICKS
     # ─────────────────────────────────────────────────────────────
+    def _probe_and_recover_order(
+        self,
+        strategy: ILiveStrategy,
+        intent: OrderIntent,
+        probe_timeout_sec: Optional[float] = None,
+        poll_interval_sec: Optional[float] = None,
+    ) -> OrderResult:
+        """
+        Active Probing Loop: Memverifikasi apakah order yang mengalami IPC Timeout
+        ternyata berhasil dieksekusi di broker (menyelamatkan trade tanpa risiko order dobel).
+        """
+        if probe_timeout_sec is None:
+            probe_timeout_sec = getattr(lcfg, "PROBE_TIMEOUT_SEC", 15.0)
+        if poll_interval_sec is None:
+            poll_interval_sec = getattr(lcfg, "PROBE_INTERVAL_SEC", 3.0)
+
+        strat_id_prefix = strategy.strategy_id.upper()
+        start_time = time.time()
+        self.logger.warning(
+            f"[⏱️ ACTIVE PROBING] Order {intent.comment} ({strategy.name}) mengalami timeout jaringan! "
+            f"Melakukan investigasi broker selama {probe_timeout_sec:.0f}s untuk melacak status deal..."
+        )
+
+        while True:
+            # 1. Cek apakah posisi terbuka sudah ada di broker
+            open_pos = self.connector.get_open_positions(lcfg.MAGIC_NUMBER)
+            for p in open_pos:
+                comm = getattr(p, "comment", "") or ""
+                if intent.comment in comm or strat_id_prefix in comm.upper() or strategy.name.split()[0].upper() in comm.upper():
+                    self.logger.info(
+                        f"[🛡️ PROBE RECOVERY SUCCESS] Order {strategy.name} (Ticket #{p.ticket}) "
+                        f"berhasil diverifikasi aktif di broker! Trade terselamatkan (0 Trade Hilang)."
+                    )
+                    return OrderResult(
+                        success=True,
+                        retcode=10009,
+                        order_id=p.ticket,
+                        price=getattr(p, "price_open", intent.entry_price),
+                        volume=getattr(p, "volume", intent.volume),
+                        comment=f"Recovered via Active Probe: #{p.ticket}",
+                    )
+
+            # 2. Cek apakah deal sudah tercatat di history hari ini
+            if hasattr(self.connector, "get_today_deals"):
+                deals = self.connector.get_today_deals(lcfg.MAGIC_NUMBER)
+                for d in deals:
+                    comm = getattr(d, "comment", "") or ""
+                    if intent.comment in comm or strat_id_prefix in comm.upper() or strategy.name.split()[0].upper() in comm.upper():
+                        self.logger.info(
+                            f"[🛡️ PROBE RECOVERY SUCCESS] Deal {strategy.name} (Ticket #{d.ticket}) "
+                            f"ditemukan di history broker! Trade terselamatkan."
+                        )
+                        return OrderResult(
+                            success=True,
+                            retcode=10009,
+                            order_id=d.ticket,
+                            price=getattr(d, "price", intent.entry_price),
+                            volume=getattr(d, "volume", intent.volume),
+                            comment=f"Recovered from deals: #{d.ticket}",
+                        )
+
+            if time.time() - start_time >= probe_timeout_sec:
+                break
+            time.sleep(poll_interval_sec)
+
+        # Broker terbukti 100% bersih dari order lama
+        self.logger.warning(
+            f"[🔍 PROBE VERIFIED CLEAN] Broker terkonfirmasi bersih dari order {intent.comment}. "
+            f"Tidak ada posisi/deal yang terbentuk di server broker."
+        )
+        return OrderResult(
+            success=False,
+            retcode=-10008,
+            order_id=0,
+            price=0.0,
+            volume=0.0,
+            comment="IPC Timeout: Verified not executed at broker after active probing",
+        )
+
     def _dispatch_order_intent(self, strategy: ILiveStrategy, intent: OrderIntent):
-        """Kirim OrderIntent ke broker adapter dengan proteksi in-flight mutex."""
+        """Kirim OrderIntent ke broker adapter dengan proteksi in-flight mutex & Active Probing."""
         strategy.order_in_flight = True
         tp_log = f"{intent.take_profit:.2f}" if intent.take_profit is not None else "None"
         try:
+            # Pastikan idempotency tag berbasis tanggal tersemat di comment
+            today_tag = datetime.now(timezone.utc).strftime("%y%m%d")
+            if today_tag not in intent.comment:
+                intent.comment = f"{intent.comment}-{today_tag}"
+
             self.logger.info(
                 f"\n[🚀 SINYAL {strategy.name.upper()}] {intent.action} {intent.volume} Lot {lcfg.SYMBOL} "
-                f"| Entry: {intent.entry_price:.2f} | SL: {intent.stop_loss:.2f} | TP: {tp_log}"
+                f"| Entry: {intent.entry_price:.2f} | SL: {intent.stop_loss:.2f} | TP: {tp_log} | Tag: {intent.comment}"
             )
             res = self.connector.open_market_order(
                 direction=intent.action,
@@ -345,6 +429,42 @@ class LivePortfolioTrader:
                 tp=intent.take_profit,
                 comment=intent.comment,
             )
+
+            # Jika terjadi IPC Timeout (retcode == -10008 atau "Timeout" in res.comment)
+            if not res.success and getattr(lcfg, "ENABLE_ACTIVE_PROBING", True) and (res.retcode == -10008 or "Timeout" in res.comment or "TIMEOUT" in res.comment.upper()):
+                # Masuk Active Probing untuk menyelamatkan trade tanpa risiko order ganda
+                recovered_res = self._probe_and_recover_order(strategy, intent)
+                if recovered_res.success:
+                    res = recovered_res
+                else:
+                    # Broker terbukti bersih dari order lama. Sekarang RE-FIRE jika kuota retry masih ada!
+                    if strategy.retry_count < lcfg.MAX_SESSION_RETRIES:
+                        tick = self.connector.get_tick(lcfg.SYMBOL) if hasattr(self.connector, "get_tick") else self.connector.get_current_tick(lcfg.SYMBOL)
+                        if tick:
+                            curr_price = tick["ask"] if intent.action.upper() == "BUY" else tick["bid"]
+                            slippage = abs(curr_price - intent.entry_price)
+                            max_allowed_slip = getattr(lcfg, "MAX_REFIRE_SLIPPAGE_USD", 1.50)
+
+                            if slippage <= max_allowed_slip:
+                                self.logger.info(
+                                    f"[🔄 RE-FIRE ORDER ({strategy.retry_count + 1}/{lcfg.MAX_SESSION_RETRIES})] "
+                                    f"Menembak ulang order {strategy.name} setelah verifikasi bersih (Slippage: ${slippage:.2f} <= ${max_allowed_slip:.2f})..."
+                                )
+                                intent.entry_price = curr_price
+                                refire_res = self.connector.open_market_order(
+                                    direction=intent.action,
+                                    volume=intent.volume,
+                                    sl=intent.stop_loss,
+                                    tp=intent.take_profit,
+                                    comment=intent.comment,
+                                )
+                                res = refire_res
+                            else:
+                                self.logger.warning(
+                                    f"[⚠️ RE-FIRE ABORTED] Harga pasar melompat (${slippage:.2f} > batas ${max_allowed_slip:.2f}). "
+                                    f"Re-fire dibatalkan demi disiplin slippage."
+                                )
+
             strategy.on_order_result(res, self.connector)
             if not res.success and strategy.retry_count >= lcfg.MAX_SESSION_RETRIES:
                 self.telegram.notify_session_lockout(

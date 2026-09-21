@@ -186,3 +186,11 @@ BROKER_SERVER_OFFSET_HOURS = _get_env_int("BROKER_SERVER_OFFSET_HOURS", 0) # 0 =
 # ─────────────────────────────────────────────
 ENABLE_STALE_FEED_GUARD = _get_env_bool("ENABLE_STALE_FEED_GUARD", True)
 MAX_STALE_FEED_SECONDS  = _get_env_float("MAX_STALE_FEED_SECONDS", 900.0)  # 15 menit (3 bar M5)
+
+# ─────────────────────────────────────────────
+# 12. IDEMPOTENCY & ACTIVE PROBING RECOVERY (P0)
+# ─────────────────────────────────────────────
+ENABLE_ACTIVE_PROBING   = _get_env_bool("ENABLE_ACTIVE_PROBING", True)
+PROBE_TIMEOUT_SEC       = _get_env_float("PROBE_TIMEOUT_SEC", 15.0)       # Investigasi broker saat timeout
+PROBE_INTERVAL_SEC      = _get_env_float("PROBE_INTERVAL_SEC", 3.0)        # Polling cross-check status broker
+MAX_REFIRE_SLIPPAGE_USD = _get_env_float("MAX_REFIRE_SLIPPAGE_USD", 1.50) # Maksimal toleransi slippage saat re-fire

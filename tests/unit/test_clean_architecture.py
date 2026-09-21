@@ -26,6 +26,7 @@ from src.strategies.asian_mr.signals import evaluate_asian_exit, evaluate_asian_
 from src.strategies.london_orb.signals import evaluate_london_exit, evaluate_london_entry
 from src.strategies.ny_orb.signals import evaluate_ny_exit, evaluate_ny_entry
 from src.execution.runner import LivePortfolioTrader
+from src.execution.executors.london import LondonLiveStrategy
 
 
 class MockBroker:
@@ -350,7 +351,7 @@ class TestCleanArchitecture(unittest.TestCase):
         sent = mock_broker.sent_orders[0]
         self.assertEqual(sent["action"], "BUY")
         self.assertEqual(sent["volume"], 0.05)
-        self.assertEqual(sent["comment"], "GoldScalper-Test")
+        self.assertIn("GoldScalper-Test", sent["comment"])
         self.assertTrue(custom_strat.trades_today)
 
     def test_stale_market_data_guard_blocks_execution(self):
@@ -486,6 +487,127 @@ class TestCleanArchitecture(unittest.TestCase):
         trader._tick_cycle(eval_fresh)
         self.assertFalse(trader._is_feed_stale)
         self.assertEqual(len(mock_tele.recoveries), 1)
+
+    def test_active_probing_recovers_late_broker_fill(self):
+        """P0 Idempotency: Jika order timeout tapi ternyata masuk di broker, probe menyelamatkannya (0 trade hilang, 0 duplikasi)."""
+        from unittest.mock import patch
+        mock_broker = MockBroker()
+
+        # Simulasikan open_market_order timeout jaringan
+        order_calls = []
+        def mock_open_market_order(**kwargs):
+            order_calls.append(kwargs)
+            return OrderResult(False, -10008, 0, 0.0, 0.0, "IPC Timeout: State Unknown")
+
+        mock_broker.open_market_order = mock_open_market_order
+        # Posisi ternyata aktif di broker
+        mock_broker.get_open_positions = lambda magic: [
+            MockPosition(ticket=9991, profit=0.0, comment="London-ORB-FLG-260921")
+        ]
+
+        strategy = LondonLiveStrategy()
+        trader = LivePortfolioTrader(connector=mock_broker, strategies=[strategy])
+
+        intent = OrderIntent(
+            strategy_id="LONDON",
+            action="BUY",
+            volume=0.05,
+            entry_price=2000.0,
+            stop_loss=1990.0,
+            take_profit=2020.0,
+            comment="London-ORB-FLG",
+        )
+
+        with patch("src.execution.config.PROBE_TIMEOUT_SEC", 0.02), \
+             patch("src.execution.config.PROBE_INTERVAL_SEC", 0.005):
+            trader._dispatch_order_intent(strategy, intent)
+
+        # Buktikan: trade berhasil diselamatkan dan tidak ada order ganda yang dikirim!
+        self.assertTrue(strategy.trades_today)
+        self.assertEqual(strategy.retry_count, 0)
+        self.assertEqual(len(order_calls), 1)
+
+    def test_active_probing_clean_broker_triggers_refire(self):
+        """P0 Idempotency: Jika order timeout dan broker bersih, bot melakukan Re-Fire (0 trade dikorbankan)."""
+        from unittest.mock import patch
+        mock_broker = MockBroker()
+
+        order_calls = []
+        def mock_open_market_order(**kwargs):
+            order_calls.append(kwargs)
+            if len(order_calls) == 1:
+                return OrderResult(False, -10008, 0, 0.0, 0.0, "IPC Timeout: State Unknown")
+            else:
+                return OrderResult(True, 10009, 9992, 2000.20, 0.05, "Re-fire filled successfully")
+
+        mock_broker.open_market_order = mock_open_market_order
+        mock_broker.get_open_positions = lambda magic: []
+        mock_broker.get_today_deals = lambda magic: []
+
+        strategy = LondonLiveStrategy()
+        trader = LivePortfolioTrader(connector=mock_broker, strategies=[strategy])
+
+        intent = OrderIntent(
+            strategy_id="LONDON",
+            action="BUY",
+            volume=0.05,
+            entry_price=2000.0,
+            stop_loss=1990.0,
+            take_profit=2020.0,
+            comment="London-ORB-FLG",
+        )
+
+        with patch("src.execution.config.PROBE_TIMEOUT_SEC", 0.02), \
+             patch("src.execution.config.PROBE_INTERVAL_SEC", 0.005):
+            trader._dispatch_order_intent(strategy, intent)
+
+        # Buktikan: Re-fire berhasil dieksekusi setelah verifikasi broker bersih
+        self.assertTrue(strategy.trades_today)
+        self.assertEqual(len(order_calls), 2)
+        self.assertEqual(order_calls[1]["direction"], "BUY")
+
+    def test_active_probing_excessive_slippage_aborts_refire(self):
+        """P0 Idempotency: Jika harga melompat melebihi toleransi slippage saat timeout, re-fire dibatalkan demi keamanan."""
+        from unittest.mock import patch
+        mock_broker = MockBroker()
+
+        order_calls = []
+        def mock_open_market_order(**kwargs):
+            order_calls.append(kwargs)
+            return OrderResult(False, -10008, 0, 0.0, 0.0, "IPC Timeout: State Unknown")
+
+        mock_broker.open_market_order = mock_open_market_order
+        mock_broker.get_open_positions = lambda magic: []
+        mock_broker.get_today_deals = lambda magic: []
+        # Harga melompat $5.00 ke 2005.00 (melebihi limit $1.50)
+        mock_broker.get_current_tick = lambda symbol: {
+            "bid": 2004.80,
+            "ask": 2005.00,
+            "spread": 0.20,
+            "time": datetime.now(timezone.utc),
+        }
+
+        strategy = LondonLiveStrategy()
+        trader = LivePortfolioTrader(connector=mock_broker, strategies=[strategy])
+
+        intent = OrderIntent(
+            strategy_id="LONDON",
+            action="BUY",
+            volume=0.05,
+            entry_price=2000.0,
+            stop_loss=1990.0,
+            take_profit=2020.0,
+            comment="London-ORB-FLG",
+        )
+
+        with patch("src.execution.config.PROBE_TIMEOUT_SEC", 0.02), \
+             patch("src.execution.config.PROBE_INTERVAL_SEC", 0.005), \
+             patch("src.execution.config.MAX_REFIRE_SLIPPAGE_USD", 1.50):
+            trader._dispatch_order_intent(strategy, intent)
+
+        # Re-fire dibatalkan, hanya 1 order yang pernah dikirim
+        self.assertEqual(len(order_calls), 1)
+        self.assertFalse(strategy.trades_today)
 
 
 if __name__ == "__main__":
