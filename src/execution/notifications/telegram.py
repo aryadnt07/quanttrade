@@ -261,6 +261,137 @@ class TelegramNotifier:
         )
         return self.send_message(msg)
 
+    def notify_startup(
+        self,
+        account: int,
+        server: str,
+        balance: float,
+        equity: float,
+        symbol: str = lcfg.SYMBOL,
+        active_strategies: Optional[list] = None,
+    ) -> bool:
+        """Kirim notifikasi saat bot live berhasil diinisialisasi dan mulai aktif."""
+        strats_str = ", ".join(active_strategies) if active_strategies else "Asian MR, London ORB, NY ORB"
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        msg = (
+            f"<b>🚀 [SYSTEM STARTUP] QuantTrade 24/7 Engine</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Bot live execution telah <b>AKTIF</b> di Windows VPS/Terminal.\n"
+            f"• <b>Akun MT5:</b> <code>{account} ({server})</code>\n"
+            f"• <b>Saldo:</b> <code>${balance:,.2f} USD</code>\n"
+            f"• <b>Ekuitas:</b> <code>${equity:,.2f} USD</code>\n"
+            f"• <b>Simbol:</b> <code>{symbol}</code>\n"
+            f"• <b>Mode Notifikasi:</b> <code>{self.mode}</code>\n"
+            f"• <b>Strategi Aktif:</b> <code>{strats_str}</code>\n"
+            f"• <b>Status:</b> <code>Monitoring Real-Time Ticks</code>\n"
+            f"• <b>Waktu Mulai:</b> <code>{now_str}</code>"
+        )
+        return self.send_message(msg)
+
+    def notify_shutdown(
+        self,
+        reason: str = "Manual Stop (Ctrl+C)",
+        balance: Optional[float] = None,
+        equity: Optional[float] = None,
+    ) -> bool:
+        """Kirim notifikasi saat bot dimatikan / berhenti beroperasi."""
+        bal_str = f"${balance:,.2f} USD" if balance is not None else "N/A"
+        eq_str = f"${equity:,.2f} USD" if equity is not None else "N/A"
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        msg = (
+            f"<b>🛑 [SYSTEM SHUTDOWN] QuantTrade Engine Berhenti</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Bot live execution telah <b>DIMATIKAN / OFFLINE</b>.\n"
+            f"• <b>Alasan:</b> <code>{reason}</code>\n"
+            f"• <b>Saldo Terakhir:</b> <code>{bal_str}</code>\n"
+            f"• <b>Ekuitas Terakhir:</b> <code>{eq_str}</code>\n"
+            f"• <b>Koneksi MT5:</b> Ditutup dengan aman\n"
+            f"• <b>PID Lock:</b> Dirilis\n"
+            f"• <b>Waktu Berhenti:</b> <code>{now_str}</code>"
+        )
+        return self.send_message(msg)
+
+    def notify_session_open(
+        self,
+        session_name: str,
+        window_info: str,
+        details: str = "",
+    ) -> bool:
+        """Kirim notifikasi saat sesi trading resmi dimulai."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        msg = (
+            f"<b>🔔 [SESSION OPEN] {session_name}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Jendela Waktu:</b> <code>{window_info}</code>\n"
+            f"• <b>Status:</b> <code>AKTIF (Mencari Peluang Entri)</code>\n"
+            + (f"• <b>Info:</b> {details}\n" if details else "")
+            + f"• <b>Waktu:</b> <code>{now_str}</code>"
+        )
+        return self.send_message(msg)
+
+    def notify_session_close(
+        self,
+        session_name: str,
+        trades_executed_today: bool = False,
+        next_session_info: str = "",
+    ) -> bool:
+        """Kirim notifikasi saat sesi trading berakhir."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+        trade_status = "Eksekusi Dilakukan" if trades_executed_today else "Tidak Ada Trade / Flat"
+
+        msg = (
+            f"<b>🌙 [SESSION CLOSE] {session_name}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Status:</b> Sesi telah ditutup (Cutoff / Window Ended)\n"
+            f"• <b>Hasil Sesi:</b> <code>{trade_status}</code>\n"
+            + (f"• <b>Sesi Berikutnya:</b> <code>{next_session_info}</code>\n" if next_session_info else "")
+            + f"• <b>Waktu:</b> <code>{now_str}</code>"
+        )
+        return self.send_message(msg)
+
+    def notify_or_formed(
+        self,
+        session_name: str,
+        or_high: float,
+        or_low: float,
+        or_range: float,
+    ) -> bool:
+        """Kirim notifikasi saat box Opening Range selesai terbentuk."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        msg = (
+            f"<b>📦 [BOX OR FORMED] {session_name}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"Opening Range M5 telah terkunci dan siap untuk breakout!\n"
+            f"• <b>Range High:</b> <code>{or_high:.2f}</code>\n"
+            f"• <b>Range Low:</b> <code>{or_low:.2f}</code>\n"
+            f"• <b>Total Range:</b> <code>{or_range:.2f} pts (${or_range:.2f})</code>\n"
+            f"• <b>Waktu Terbentuk:</b> <code>{now_str}</code>"
+        )
+        return self.send_message(msg)
+
+    def notify_session_lockout(
+        self,
+        session_name: str,
+        retry_count: int,
+        max_retries: int,
+    ) -> bool:
+        """Kirim notifikasi jika sesi dilockout karena requote spam protection."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        msg = (
+            f"<b>🔒 [SESSION LOCKOUT] {session_name}</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Penyebab:</b> Percobaan order gagal melampaui batas ({retry_count}/{max_retries}x)\n"
+            f"• <b>Aksi Bot:</b> Sesi {session_name} dikunci hari ini untuk keamanan modal.\n"
+            f"• <b>Waktu:</b> <code>{now_str}</code>"
+        )
+        return self.send_message(msg)
+
+
 
 def test_telegram_connection() -> bool:
     """Fungsi diagnostik mandiri untuk menguji koneksi bot Telegram."""

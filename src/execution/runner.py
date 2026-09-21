@@ -16,7 +16,7 @@ import sys
 import time
 import atexit
 from datetime import datetime, timezone, date
-from typing import Optional, Dict, Any, List
+from typing import Optional, Dict, Any, List, Tuple
 
 if sys.platform == "win32":
     try:
@@ -127,6 +127,11 @@ class LivePortfolioTrader:
         self.trades_today = _StrategyStateProxy(self, "trades_today", {"ASIAN": False, "LONDON": False, "NY": False})
         self._order_in_flight = _StrategyStateProxy(self, "order_in_flight", {"ASIAN": False, "LONDON": False, "NY": False})
         self.retry_counts = _StrategyStateProxy(self, "retry_count", {"ASIAN": 0, "LONDON": 0, "NY": 0})
+
+        # Session transition and OR notification tracking
+        self._current_phase: Optional[str] = None
+        self._or_notified: Dict[str, bool] = {"LONDON": False, "NY": False}
+
 
     # ─────────────────────────────────────────────────────────────
     # BACKWARD COMPATIBILITY PROPERTIES (LEGACY TEST SUPPORT)
@@ -337,6 +342,12 @@ class LivePortfolioTrader:
                 comment=intent.comment,
             )
             strategy.on_order_result(res, self.connector)
+            if not res.success and strategy.retry_count >= lcfg.MAX_SESSION_RETRIES:
+                self.telegram.notify_session_lockout(
+                    session_name=strategy.name,
+                    retry_count=strategy.retry_count,
+                    max_retries=lcfg.MAX_SESSION_RETRIES,
+                )
         finally:
             strategy.order_in_flight = False
 
@@ -368,6 +379,10 @@ class LivePortfolioTrader:
             # Polimorfik reset untuk setiap strategi
             for strat in self.strategies:
                 strat.on_daily_reset(today_date, self.today_schedule)
+
+            self._or_notified = {"LONDON": False, "NY": False}
+            self._current_phase = None
+
 
             ny_tz = self.today_schedule.get("NY_TZ_NAME", "UTC")
             self.logger.info(f"[📅 PERGANTIAN HARI UTC] Tanggal baru: {today_date}. Counter trade harian di-reset.")
@@ -445,12 +460,115 @@ class LivePortfolioTrader:
             return f"New York ORB ({sched.get('NY_TZ_NAME', 'UTC')})"
         return "Di Luar Jendela Trading"
 
+    def _determine_session_phase(self, now_utc: datetime) -> Tuple[str, str, str, str]:
+        """
+        Deteksi fase sesi trading saat ini beserta metadata informasi.
+        Returns:
+            Tuple (phase_key, session_name, window_info, details)
+        """
+        hm = (now_utc.hour, now_utc.minute)
+        sched = self.today_schedule
+
+        # 1. Asian Session (01:00 - 04:30 UTC)
+        if sched.get("ASIAN_START") and sched["ASIAN_START"] <= hm < sched["ASIAN_END"]:
+            return (
+                "ASIA_WINDOW",
+                "Asian Mean Reversion",
+                f"{sched['ASIAN_START'][0]:02d}:{sched['ASIAN_START'][1]:02d} - {sched['ASIAN_END'][0]:02d}:{sched['ASIAN_END'][1]:02d} UTC",
+                "Strategi Mean Reversion (Bollinger Bands + RSI + EMA200). Risk: 1.0%",
+            )
+
+        # 2. London OR Formation (08:00 - 08:15 UTC)
+        if sched.get("LONDON_OR_START") and sched["LONDON_OR_START"] <= hm < sched["LONDON_ENTRY_START"]:
+            return (
+                "LONDON_OR",
+                "London Pit Opening Range (Forming)",
+                f"{sched['LONDON_OR_START'][0]:02d}:{sched['LONDON_OR_START'][1]:02d} - {sched['LONDON_ENTRY_START'][0]:02d}:{sched['LONDON_ENTRY_START'][1]:02d} UTC",
+                f"Memantau pembentukan Box Opening Range M5. Entry dibuka pukul {sched['LONDON_ENTRY_START'][0]:02d}:{sched['LONDON_ENTRY_START'][1]:02d} UTC.",
+            )
+
+        # 3. London Entry Window (08:15 - 11:30 UTC)
+        if sched.get("LONDON_ENTRY_START") and sched["LONDON_ENTRY_START"] <= hm < sched["LONDON_ENTRY_END"]:
+            return (
+                "LONDON_ENTRY",
+                "London Pit Breakout Entry Window",
+                f"{sched['LONDON_ENTRY_START'][0]:02d}:{sched['LONDON_ENTRY_START'][1]:02d} - {sched['LONDON_ENTRY_END'][0]:02d}:{sched['LONDON_ENTRY_END'][1]:02d} UTC",
+                "Jendela entri breakout aktif. Risk: 2.0%",
+            )
+
+        # 4. New York OR Formation
+        if sched.get("NY_OR_START") and sched["NY_OR_START"] <= hm < sched["NY_ENTRY_START"]:
+            ny_tz = sched.get("NY_TZ_NAME", "UTC")
+            return (
+                "NY_OR",
+                "New York Opening Range (Forming)",
+                f"{sched['NY_OR_START'][0]:02d}:{sched['NY_OR_START'][1]:02d} - {sched['NY_ENTRY_START'][0]:02d}:{sched['NY_ENTRY_START'][1]:02d} UTC ({ny_tz})",
+                f"Memantau pembentukan Box Opening Range M5 New York. Entry dibuka pukul {sched['NY_ENTRY_START'][0]:02d}:{sched['NY_ENTRY_START'][1]:02d} UTC.",
+            )
+
+        # 5. New York Entry Window
+        if sched.get("NY_ENTRY_START") and sched["NY_ENTRY_START"] <= hm < sched["NY_ENTRY_END"]:
+            ny_tz = sched.get("NY_TZ_NAME", "UTC")
+            return (
+                "NY_ENTRY",
+                "New York Breakout Entry Window",
+                f"{sched['NY_ENTRY_START'][0]:02d}:{sched['NY_ENTRY_START'][1]:02d} - {sched['NY_ENTRY_END'][0]:02d}:{sched['NY_ENTRY_END'][1]:02d} UTC ({ny_tz})",
+                "Jendela entri New York aktif. Risk: 2.0%",
+            )
+
+        return ("STANDBY", "Standby / Flat", "Di Luar Jendela Trading", "")
+
+    def _check_session_transitions(self, now_utc: datetime):
+        """Pantau pergantian fase/sesi dan kirim notifikasi Telegram saat transisi terjadi."""
+        phase_key, session_name, window_info, details = self._determine_session_phase(now_utc)
+        sched = self.today_schedule
+
+        # Inisialisasi awal saat bot pertama kali mengecek
+        if self._current_phase is None:
+            self._current_phase = phase_key
+            return
+
+        if phase_key == self._current_phase:
+            return
+
+        old_phase = self._current_phase
+        self._current_phase = phase_key
+
+        # 1. Notifikasi Penutupan Sesi Lama (Cutoff / Window Ended)
+        if old_phase == "ASIA_WINDOW":
+            self.telegram.notify_session_close(
+                session_name="Asian Mean Reversion",
+                trades_executed_today=bool(self.trades_today.get("ASIAN", False)),
+                next_session_info=f"London OR pukul {sched.get('LONDON_OR_START', (8, 0))[0]:02d}:{sched.get('LONDON_OR_START', (8, 0))[1]:02d} UTC",
+            )
+        elif old_phase == "LONDON_ENTRY":
+            self.telegram.notify_session_close(
+                session_name="London Pit ORB",
+                trades_executed_today=bool(self.trades_today.get("LONDON", False)),
+                next_session_info=f"New York OR pukul {sched.get('NY_OR_START', (13, 30))[0]:02d}:{sched.get('NY_OR_START', (13, 30))[1]:02d} UTC",
+            )
+        elif old_phase == "NY_ENTRY":
+            self.telegram.notify_session_close(
+                session_name=f"New York ORB ({sched.get('NY_TZ_NAME', 'UTC')})",
+                trades_executed_today=bool(self.trades_today.get("NY", False)),
+                next_session_info="Asian Session besok pukul 01:00 UTC",
+            )
+
+        # 2. Notifikasi Pembukaan Sesi Baru
+        if phase_key in ("ASIA_WINDOW", "LONDON_OR", "LONDON_ENTRY", "NY_OR", "NY_ENTRY"):
+            self.telegram.notify_session_open(
+                session_name=session_name,
+                window_info=window_info,
+                details=details,
+            )
+
     def _tick_cycle(self, now_utc: Optional[datetime] = None) -> bool:
         """Siklus evaluasi pasar tiap tick secara polimorfik."""
         if now_utc is None:
             now_utc = datetime.now(timezone.utc)
         today_date = now_utc.date()
         self._reset_daily_state_if_needed(today_date)
+        self._check_session_transitions(now_utc)
 
         tick = self.connector.get_tick(lcfg.SYMBOL) if hasattr(self.connector, "get_tick") else self.connector.get_current_tick(lcfg.SYMBOL)
         if not tick:
@@ -515,6 +633,22 @@ class LivePortfolioTrader:
                 if intent:
                     self._dispatch_order_intent(strat, intent)
 
+        # 3. Cek apakah Box Opening Range telah terbentuk untuk London & New York
+        for strat in self.strategies:
+            sid = strat.strategy_id
+            if sid in self._or_notified and not self._or_notified[sid]:
+                or_h = getattr(strat, "or_high", None)
+                or_l = getattr(strat, "or_low", None)
+                or_r = getattr(strat, "or_range", None)
+                if or_h is not None and or_l is not None and or_r is not None and or_r > 0:
+                    self._or_notified[sid] = True
+                    self.telegram.notify_or_formed(
+                        session_name=strat.name,
+                        or_high=or_h,
+                        or_low=or_l,
+                        or_range=or_r,
+                    )
+
         return is_in_active_window
 
     def start(self):
@@ -567,15 +701,13 @@ class LivePortfolioTrader:
                 self.logger.warning("[⚠️ ALGO TRADING DISABLED] Tombol 'Algo Trading' di terminal MT5 belum aktif!")
 
             if self.telegram.is_configured:
-                self.telegram.send_message(
-                    f"<b>🚀 [SYSTEM STARTUP] QuantTrade 24/7 Engine</b>\n"
-                    f"━━━━━━━━━━━━━━━━━━━━\n"
-                    f"Bot live execution telah aktif di Windows VPS.\n"
-                    f"• <b>Akun:</b> <code>{acc.login} ({acc.server})</code>\n"
-                    f"• <b>Saldo:</b> <code>${acc.balance:,.2f} USD</code>\n"
-                    f"• <b>Mode:</b> <code>{self.telegram.mode} (Option A)</code>\n"
-                    f"• <b>Simbol:</b> <code>{lcfg.SYMBOL}</code>\n"
-                    f"• <b>Waktu:</b> <code>{datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}</code>"
+                self.telegram.notify_startup(
+                    account=acc.login,
+                    server=acc.server,
+                    balance=acc.balance,
+                    equity=acc.equity,
+                    symbol=lcfg.SYMBOL,
+                    active_strategies=[s.name for s in self.strategies],
                 )
 
         today_utc = datetime.now(timezone.utc).date()
@@ -600,9 +732,17 @@ class LivePortfolioTrader:
                 time.sleep(sleep_duration)
         except KeyboardInterrupt:
             self.logger.info("\n[!] Perintah berhenti diterima. Mematikan bot...")
+            acc = self.connector.get_account_status()
+            bal = acc.balance if acc else None
+            eq = acc.equity if acc else None
+            self.telegram.notify_shutdown(reason="Manual Stop (Ctrl+C)", balance=bal, equity=eq)
         except Exception as e:
             err_msg = f"Runtime loop exception: {str(e)}"
             self.logger.critical(f"\n[💥 CRITICAL EXCEPTION] {err_msg}")
+            acc = self.connector.get_account_status()
+            bal = acc.balance if acc else None
+            eq = acc.equity if acc else None
+            self.telegram.notify_shutdown(reason=f"Critical Error: {str(e)}", balance=bal, equity=eq)
             self.telegram.notify_critical_alert("Runtime Exception", err_msg)
             raise e
         finally:
