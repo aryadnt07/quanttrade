@@ -180,3 +180,9 @@ PID_LOCK_FILE           = os.path.join(ROOT_DIR, "bot.lock")
 ORDER_TIMEOUT_SEC       = _get_env_float("ORDER_TIMEOUT_SEC", 10.0)
 MAX_DAILY_LOSS_PCT      = _get_env_float("MAX_DAILY_LOSS_PCT", 0.05)   # 5.0% max daily portfolio drawdown
 BROKER_SERVER_OFFSET_HOURS = _get_env_int("BROKER_SERVER_OFFSET_HOURS", 0) # 0 = Exness (UTC+0)
+
+# ─────────────────────────────────────────────
+# 11. FEED INTEGRITY & STALE DATA PROTECTION (P2)
+# ─────────────────────────────────────────────
+ENABLE_STALE_FEED_GUARD = _get_env_bool("ENABLE_STALE_FEED_GUARD", True)
+MAX_STALE_FEED_SECONDS  = _get_env_float("MAX_STALE_FEED_SECONDS", 900.0)  # 15 menit (3 bar M5)

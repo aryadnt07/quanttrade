@@ -353,6 +353,67 @@ class TestCleanArchitecture(unittest.TestCase):
         self.assertEqual(sent["comment"], "GoldScalper-Test")
         self.assertTrue(custom_strat.trades_today)
 
+    def test_stale_market_data_guard_blocks_execution(self):
+        """P2 Protection: Verifikasi bot menolak evaluasi jika feed candle M5 membeku/basi."""
+        mock_broker = MockBroker()
+
+        # Buat candle M5 yang berhenti di 10:00:00 UTC (stale)
+        stale_end = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+        dates = pd.date_range(end=stale_end, periods=70, freq="5min", tz="UTC")
+        df_stale = pd.DataFrame({
+            "datetime": dates,
+            "open": 2000.0,
+            "high": 2005.0,
+            "low": 1995.0,
+            "close": 2002.0,
+            "volume": 100,
+        })
+        mock_broker.get_recent_candles = lambda symbol, timeframe, count: df_stale.copy()
+
+        class DummyStrategy:
+            strategy_id = "DUMMY"
+            name = "Dummy v1"
+            trades_today = False
+            order_in_flight = False
+            retry_count = 0
+
+            def can_trade(self) -> bool:
+                return True
+            def on_daily_reset(self, today_date, schedule):
+                pass
+            def reconcile_broker_orders(self, broker, magic_number):
+                return False
+            def handle_oco(self, open_positions, open_pendings, broker):
+                pass
+            def evaluate_entry(self, df_m5, tick, equity, now_utc, schedule, open_pendings=None, broker=None):
+                return OrderIntent(
+                    strategy_id="DUMMY",
+                    action="BUY",
+                    volume=0.01,
+                    entry_price=2000.0,
+                    stop_loss=1990.0,
+                    take_profit=2010.0,
+                    comment="Dummy-Stale-Test",
+                )
+            def evaluate_exit(self, position, df_m5, now_utc, broker_utc_offset_sec=0, schedule=None):
+                return None
+            def on_order_result(self, res, broker=None):
+                pass
+
+        dummy_strat = DummyStrategy()
+        trader = LivePortfolioTrader(connector=mock_broker, strategies=[dummy_strat])
+
+        # Evaluasi saat 10:20:00 UTC (lag = 20 menit = 1200s > max_stale 900s)
+        eval_time = datetime(2026, 9, 21, 10, 20, tzinfo=timezone.utc)
+        trader.current_trading_day = eval_time.date()
+        trader._is_in_any_active_window = lambda dt: True
+
+        res = trader._tick_cycle(eval_time)
+
+        # Harus mengembalikan False dan menolak evaluasi / tidak mengirim order
+        self.assertFalse(res)
+        self.assertEqual(len(mock_broker.sent_orders), 0)
+
 
 if __name__ == "__main__":
     unittest.main()

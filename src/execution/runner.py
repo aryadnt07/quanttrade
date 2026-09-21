@@ -132,6 +132,7 @@ class LivePortfolioTrader:
         # Session transition and OR notification tracking
         self._current_phase: Optional[str] = None
         self._or_notified: Dict[str, bool] = {"LONDON": False, "NY": False}
+        self._last_stale_warn: float = 0.0
 
 
     # ─────────────────────────────────────────────────────────────
@@ -612,6 +613,27 @@ class LivePortfolioTrader:
 
         if df_m5 is None or len(df_m5) < 65:
             return False
+
+        # P2: Stale Market Data / Frozen Feed Detection
+        if getattr(lcfg, "ENABLE_STALE_FEED_GUARD", True):
+            last_candle_time = df_m5["datetime"].iloc[-1]
+            if hasattr(last_candle_time, "tzinfo") and last_candle_time.tzinfo is not None:
+                compare_now = now_utc if now_utc.tzinfo is not None else now_utc.replace(tzinfo=timezone.utc)
+            else:
+                compare_now = now_utc.astimezone(timezone.utc).replace(tzinfo=None) if now_utc.tzinfo is not None else now_utc
+
+            lag_seconds = (compare_now - last_candle_time).total_seconds()
+            max_stale_sec = getattr(lcfg, "MAX_STALE_FEED_SECONDS", 900.0)
+
+            if lag_seconds > max_stale_sec:
+                curr_sec = time.time()
+                if curr_sec - self._last_stale_warn >= 300.0:
+                    self._last_stale_warn = curr_sec
+                    self.logger.warning(
+                        f"[⚠️ STALE MARKET DATA] Feed candle M5 terhenti! Candle terakhir: {last_candle_time} "
+                        f"(Lag: {lag_seconds / 60.0:.1f}m > batas {max_stale_sec / 60.0:.1f}m). Evaluasi tick ditangguhkan hingga feed fresh."
+                    )
+                return False
 
         curr_time_sec = time.time()
         if curr_time_sec - self.last_heartbeat_time >= 60.0:
