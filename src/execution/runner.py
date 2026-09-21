@@ -701,7 +701,7 @@ class LivePortfolioTrader:
                 self.logger.warning("[⚠️ ALGO TRADING DISABLED] Tombol 'Algo Trading' di terminal MT5 belum aktif!")
 
             if self.telegram.is_configured:
-                self.telegram.notify_startup(
+                ok = self.telegram.notify_startup(
                     account=acc.login,
                     server=acc.server,
                     balance=acc.balance,
@@ -709,6 +709,10 @@ class LivePortfolioTrader:
                     symbol=lcfg.SYMBOL,
                     active_strategies=[s.name for s in self.strategies],
                 )
+                if ok:
+                    self.logger.info("[📱 TELEGRAM] Notifikasi startup berhasil dikirim ke Telegram.")
+                else:
+                    self.logger.warning("[⚠️ TELEGRAM] Gagal mengirim notifikasi startup ke Telegram.")
 
         today_utc = datetime.now(timezone.utc).date()
         self.current_trading_day = today_utc
@@ -735,7 +739,9 @@ class LivePortfolioTrader:
             acc = self.connector.get_account_status()
             bal = acc.balance if acc else None
             eq = acc.equity if acc else None
-            self.telegram.notify_shutdown(reason="Manual Stop (Ctrl+C)", balance=bal, equity=eq)
+            if self.telegram.is_configured:
+                self.telegram.notify_shutdown(reason="Manual Stop (Ctrl+C)", balance=bal, equity=eq)
+                self.logger.info("[📱 TELEGRAM] Notifikasi shutdown terkirim ke Telegram.")
         except Exception as e:
             err_msg = f"Runtime loop exception: {str(e)}"
             self.logger.critical(f"\n[💥 CRITICAL EXCEPTION] {err_msg}")
