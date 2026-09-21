@@ -2,10 +2,18 @@
 cd /d "%~dp0\.."
 title QuantTrade - Institutional Live Bot (24/7 Engine)
 color 0a
+
 echo ================================================================
 echo    QUANTTRADE - LIVE AUTOMATED TRADING BOT (24/7)
 echo ================================================================
 echo.
+
+if exist venv\Scripts\activate.bat (
+    call venv\Scripts\activate.bat
+) else if exist .venv\Scripts\activate.bat (
+    call .venv\Scripts\activate.bat
+)
+
 echo [*] Memulai QuantTrade Live Execution Runner...
 python main.py live
 echo.
@@ -15,4 +23,3 @@ echo     Terminal tetap terbuka agar Anda dapat membaca log di atas.
 echo ================================================================
 echo.
 pause
-
