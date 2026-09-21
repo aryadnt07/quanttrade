@@ -38,70 +38,49 @@ All 4 institutional stress testing pillars have been rigorously executed:
 
 ---
 
-## 📂 Institutional Directory Architecture
+## 📂 Institutional Directory Architecture (Option B Production-Grade)
 
 ```text
 quanttrade/
-├── configs/                              # Centralized Configuration Modules
-│   ├── __init__.py
-│   ├── asia_config.py                    # Asian Mean Reversion parameters
-│   ├── london_config.py                  # London Pit ORB parameters
-│   ├── ny_config.py                      # New York ORB parameters
-│   ├── portfolio_config.py               # Master Portfolio risk & compounding settings
-│   └── live_config.py                    # MT5 Live connection & safety gates
-├── engine/                               # Core Quantitative Strategy Engines
-│   ├── __init__.py
-│   ├── asia/                             # Asian Mean Reversion engine
-│   │   ├── indicators.py
-│   │   ├── signals.py
-│   │   └── backtester.py
-│   ├── london/                           # London Pit ORB engine
-│   │   ├── strategy.py
-│   │   ├── trade_manager.py
-│   │   └── engine.py
-│   ├── ny/                               # New York ORB engine
-│   │   ├── strategy.py
-│   │   ├── trade_manager.py
-│   │   └── engine.py
-│   └── portfolio/                        # Master Portfolio multi-session engine
-│       └── portfolio_engine.py
-├── analytics/                            # Institutional Risk Analytics & Stress Testing
-│   ├── __init__.py
-│   ├── monte_carlo.py                    # 1,000-run Monte Carlo resampling & Ruin probability
-│   ├── walk_forward.py                   # Walk-Forward / Out-of-Sample Blind Split
-│   ├── friction_decay.py                 # Friction & Slippage Decay sweep ($0.00 - $3.00)
-│   └── parameter_sensitivity.py          # 35-cell Sensitivity Surface & Robustness Plateau
-├── visualization/                        # Quantitative Visual Dashboards & Charts
-│   ├── __init__.py
-│   ├── asia_charts.py                    # Asian MR 4-panel performance dashboard
-│   ├── ny_charts.py                      # NY ORB 4-panel performance dashboard
-│   └── portfolio_charts.py               # Master Portfolio 4-panel visual dashboard
-├── live/                                 # MetaTrader 5 Live Trading Bridge
-│   ├── live_runner.py                    # Multi-session live trading execution runner
-│   ├── mt5_connector.py                  # Low-latency MT5 bridge & order management
-│   ├── test_connection.py                # Live connection health-check diagnostic
-│   └── live_config.py                    # Backward-compatible config shim
-├── deploy/                               # Windows VPS 1-Click Automation Scripts
-│   ├── CHECK_CONNECTION.bat              # 1-Click MT5 connection health check
-│   ├── START_LIVE_BOT.bat                # 1-Click 24/7 live trading runner
-│   └── UPDATE_LIVE_BOT.bat               # 1-Click graceful git pull & auto-restart
-├── scripts/                              # Dedicated Automation & Stress Test Runners
-│   ├── run_monte_carlo.py                # Monte Carlo stress test CLI runner
-│   ├── run_walk_forward.py               # Walk-Forward OOS CLI runner
-│   ├── run_friction_decay.py             # Friction decay CLI runner
-│   └── run_sensitivity.py                # Parameter sensitivity CLI runner
-├── utils/                                # Data Ingestion & Causal Preprocessing
-│   ├── data_loader.py                    # Historical CSV loader & data validation
-│   └── mtf_loader.py                     # Causal Multi-Timeframe alignment pipeline
-├── data/                                 # Historical tick & bar datasets
-│   └── xauusd-m5-bid-2021-09-08-2026-09-08.csv
-├── output/                               # Performance charts, CSV logs, & visual dashboards
-├── main.py                               # Unified Master CLI Entry Point
-├── main_portfolio.py                     # Backward-compatible Master Portfolio runner
-├── main_london.py                        # Backward-compatible London ORB runner
-├── main_ny.py                            # Backward-compatible NY ORB runner
-├── main_asia.py                          # Backward-compatible Asian MR runner
-├── requirements.txt                      # Project dependencies
+├── src/
+│   ├── core/                          # Domain primitives (Direction, Signal, Pure math indicators, Stats)
+│   ├── strategies/                    # Canonical quantitative strategy implementations
+│   │   ├── asian_mr/                  # Asian Mean Reversion (config, signals, backtester)
+│   │   ├── london_orb/                # London Pit ORB (config, signals, backtester, trade_manager)
+│   │   ├── ny_orb/                    # New York ORB (config, signals, backtester, trade_manager)
+│   │   └── portfolio/                 # Master Portfolio Engine & cross-strategy allocator
+│   ├── execution/                     # Production MetaTrader 5 Live Trading Bridge
+│   │   ├── runner.py                  # LivePortfolioTrader 24/7 Engine
+│   │   ├── mt5_connector.py           # Broker API adapter, IPC guards, Order sender
+│   │   ├── risk_manager.py            # Daily Loss Circuit Breaker, Single-instance lock
+│   │   ├── position_manager.py        # Position exits, Z-Neutral TP, Time-stop cutoffs
+│   │   ├── scheduler.py               # Multi-session scheduling & DST offset detection
+│   │   ├── system_check.py            # 10-stage live system pre-flight audit suite
+│   │   ├── executors/                 # Session execution modules (asia, london, ny)
+│   │   └── notifications/             # Telegram real-time push alerting engine
+│   ├── data/                          # Data pipelines (CSV loader & multi-timeframe engine)
+│   └── observability/                 # Thread-safe dual logger & trade journal recorder
+├── research/                          # Quantitative research & validation suite
+│   ├── analytics/                     # Monte Carlo, Walk-Forward, Friction Decay, Sensitivity
+│   └── visualization/                 # Publication-grade dark HUD performance dashboards
+├── tests/                             # Enterprise automated testing suites
+│   ├── unit/                          # Unit tests for indicators & signal models
+│   ├── integration/                   # Integration tests for backtest engines & portfolio
+│   └── live/                          # Live execution audit guards & risk control tests
+├── deploy/                            # Windows VPS 1-Click Automation Scripts
+│   ├── CHECK_CONNECTION.bat          # 1-Click MT5 connection health check
+│   ├── TEST_LIVE_SYSTEM.bat          # 1-Click 10-stage pre-flight readiness audit
+│   ├── START_LIVE_BOT.bat            # 1-Click 24/7 live trading runner
+│   └── UPDATE_LIVE_BOT.bat           # 1-Click hot-reloader (graceful stop, git pull, auto-restart)
+├── docs/                              # Architecture, stress test reports & deployment guides
+│   ├── ARCHITECTURE.md
+│   ├── STRESS_TEST_REPORT.md
+│   └── VPS_DEPLOYMENT_GUIDE.md
+├── data/                              # Historical tick & bar datasets (gitignored)
+├── output/                            # Performance charts, CSV logs, & visual dashboards (gitignored)
+├── logs/                              # Runtime logs & circuit breaker states (gitignored)
+├── main.py                            # Unified Master CLI Entry Point
+├── requirements.txt                   # Project dependencies
 └── README.md
 ```
 
@@ -116,8 +95,8 @@ QuantTrade provides a clean, unified command-line interface via `main.py`:
 # Run full Master Portfolio (Asia MR + London ORB + NY ORB)
 python main.py portfolio
 
-# Or run with backward-compatible script
-python main_portfolio.py
+# Run without rendering chart (fast mode)
+python main.py portfolio --no-chart
 ```
 
 ### 2. Standalone Strategy Backtests
