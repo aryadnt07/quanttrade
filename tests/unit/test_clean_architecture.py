@@ -414,6 +414,79 @@ class TestCleanArchitecture(unittest.TestCase):
         self.assertFalse(res)
         self.assertEqual(len(mock_broker.sent_orders), 0)
 
+    def test_stale_market_data_weekend_bypass(self):
+        """P2 Protection: Verifikasi guard stale feed tidak memblokir atau alert saat akhir pekan."""
+        mock_broker = MockBroker()
+
+        dates = pd.date_range("2026-09-25 21:00:00", periods=70, freq="5min", tz="UTC")
+        df_old = pd.DataFrame({
+            "datetime": dates,
+            "open": 2000.0,
+            "high": 2005.0,
+            "low": 1995.0,
+            "close": 2002.0,
+            "volume": 100,
+        })
+        mock_broker.get_recent_candles = lambda symbol, timeframe, count: df_old.copy()
+
+        trader = LivePortfolioTrader(connector=mock_broker)
+
+        # Evaluasi saat hari Sabtu (2026-09-26 10:00:00 UTC)
+        saturday_utc = datetime(2026, 9, 26, 10, 0, tzinfo=timezone.utc)
+        self.assertTrue(trader._is_market_closed_weekend(saturday_utc))
+
+        trader._tick_cycle(saturday_utc)
+        self.assertFalse(trader._is_feed_stale)
+
+    def test_stale_market_data_telegram_alerts_and_recovery(self):
+        """P2 Protection: Verifikasi notifikasi Telegram dikirim saat stale dan saat sembuh (recovery)."""
+        mock_broker = MockBroker()
+
+        class MockTelegram:
+            is_configured = True
+            def __init__(self):
+                self.warnings = []
+                self.recoveries = []
+            def notify_stale_data_warning(self, symbol, lag_minutes, last_candle_time_str, max_allowed_minutes=15.0):
+                self.warnings.append((symbol, lag_minutes, last_candle_time_str))
+                return True
+            def notify_stale_data_recovered(self, symbol, lag_minutes):
+                self.recoveries.append((symbol, lag_minutes))
+                return True
+            def __getattr__(self, name):
+                return lambda *args, **kwargs: True
+
+        mock_tele = MockTelegram()
+        trader = LivePortfolioTrader(connector=mock_broker, notifier=mock_tele)
+
+        # 1. Feed Stale (lag = 20m)
+        stale_end = datetime(2026, 9, 21, 10, 0, tzinfo=timezone.utc)
+        dates_stale = pd.date_range(end=stale_end, periods=70, freq="5min", tz="UTC")
+        df_stale = pd.DataFrame({
+            "datetime": dates_stale,
+            "open": 2000.0, "high": 2005.0, "low": 1995.0, "close": 2002.0, "volume": 100,
+        })
+        mock_broker.get_recent_candles = lambda symbol, timeframe, count: df_stale.copy()
+
+        eval_stale = datetime(2026, 9, 21, 10, 20, tzinfo=timezone.utc)
+        trader._tick_cycle(eval_stale)
+        self.assertTrue(trader._is_feed_stale)
+        self.assertEqual(len(mock_tele.warnings), 1)
+
+        # 2. Feed Recovered (lag = 5m)
+        fresh_end = datetime(2026, 9, 21, 10, 20, tzinfo=timezone.utc)
+        dates_fresh = pd.date_range(end=fresh_end, periods=70, freq="5min", tz="UTC")
+        df_fresh = pd.DataFrame({
+            "datetime": dates_fresh,
+            "open": 2000.0, "high": 2005.0, "low": 1995.0, "close": 2002.0, "volume": 100,
+        })
+        mock_broker.get_recent_candles = lambda symbol, timeframe, count: df_fresh.copy()
+
+        eval_fresh = datetime(2026, 9, 21, 10, 25, tzinfo=timezone.utc)
+        trader._tick_cycle(eval_fresh)
+        self.assertFalse(trader._is_feed_stale)
+        self.assertEqual(len(mock_tele.recoveries), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

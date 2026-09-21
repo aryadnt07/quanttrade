@@ -403,6 +403,47 @@ class TelegramNotifier:
         )
         return self.send_message(msg)
 
+    def notify_stale_data_warning(
+        self,
+        symbol: str = lcfg.SYMBOL,
+        lag_minutes: float = 0.0,
+        last_candle_time_str: str = "",
+        max_allowed_minutes: float = 15.0,
+    ) -> bool:
+        """Kirim alert saat feed candle M5 membeku/terhenti melampaui batas toleransi."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        msg = (
+            f"<b>⚠️ [WARNING: MARKET DATA STALE]</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Simbol:</b> <code>{symbol} (M5)</code>\n"
+            f"• <b>Candle Terakhir:</b> <code>{last_candle_time_str}</code>\n"
+            f"• <b>Keterlambatan:</b> <code>{lag_minutes:.1f}m (&gt; batas {max_allowed_minutes:.1f}m)</code>\n"
+            f"• <b>Status Eksekusi:</b> <code>STANDBY (Trading Ditangguhkan)</code>\n"
+            f"• <b>Penyebab:</b> Feed candle dari broker terhenti/beku\n"
+            f"• <b>Aksi Bot:</b> Menunggu candle fresh sebelum evaluasi sinyal\n"
+            f"• <b>Waktu:</b> <code>{now_str}</code>"
+        )
+        return self.send_message(msg)
+
+    def notify_stale_data_recovered(
+        self,
+        symbol: str = lcfg.SYMBOL,
+        lag_minutes: float = 0.0,
+    ) -> bool:
+        """Kirim notifikasi pemulihan saat feed candle kembali fresh dan normal."""
+        now_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+
+        msg = (
+            f"<b>✅ [FEED RECOVERED] Data Pasar Normal Kembali</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"• <b>Simbol:</b> <code>{symbol} (M5)</code>\n"
+            f"• <b>Lag Terkini:</b> <code>{lag_minutes:.1f}m (Fresh)</code>\n"
+            f"• <b>Status Bot:</b> <code>ACTIVE (Kembali Mengevaluasi Sinyal)</code>\n"
+            f"• <b>Waktu:</b> <code>{now_str}</code>"
+        )
+        return self.send_message(msg)
+
 
 
 def test_telegram_connection() -> bool:

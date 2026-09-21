@@ -132,7 +132,9 @@ class LivePortfolioTrader:
         # Session transition and OR notification tracking
         self._current_phase: Optional[str] = None
         self._or_notified: Dict[str, bool] = {"LONDON": False, "NY": False}
+        self._is_feed_stale: bool = False
         self._last_stale_warn: float = 0.0
+        self._last_stale_tele_warn: float = 0.0
 
 
     # ─────────────────────────────────────────────────────────────
@@ -614,8 +616,8 @@ class LivePortfolioTrader:
         if df_m5 is None or len(df_m5) < 65:
             return False
 
-        # P2: Stale Market Data / Frozen Feed Detection
-        if getattr(lcfg, "ENABLE_STALE_FEED_GUARD", True):
+        # P2: Stale Market Data / Frozen Feed Detection (dikecualikan saat akhir pekan / pasar tutup)
+        if getattr(lcfg, "ENABLE_STALE_FEED_GUARD", True) and not self._is_market_closed_weekend(now_utc):
             last_candle_time = df_m5["datetime"].iloc[-1]
             if hasattr(last_candle_time, "tzinfo") and last_candle_time.tzinfo is not None:
                 compare_now = now_utc if now_utc.tzinfo is not None else now_utc.replace(tzinfo=timezone.utc)
@@ -627,13 +629,39 @@ class LivePortfolioTrader:
 
             if lag_seconds > max_stale_sec:
                 curr_sec = time.time()
+                # 1. Throttle logging di console (tiap 5 menit)
                 if curr_sec - self._last_stale_warn >= 300.0:
                     self._last_stale_warn = curr_sec
                     self.logger.warning(
                         f"[⚠️ STALE MARKET DATA] Feed candle M5 terhenti! Candle terakhir: {last_candle_time} "
                         f"(Lag: {lag_seconds / 60.0:.1f}m > batas {max_stale_sec / 60.0:.1f}m). Evaluasi tick ditangguhkan hingga feed fresh."
                     )
+
+                # 2. Notifikasi Telegram (Kirim saat pertama kali terdeteksi atau reminder tiap 30 menit)
+                if not self._is_feed_stale or (curr_sec - self._last_stale_tele_warn >= 1800.0):
+                    self._is_feed_stale = True
+                    self._last_stale_tele_warn = curr_sec
+                    last_candle_str = last_candle_time.strftime("%Y-%m-%d %H:%M:%S UTC") if hasattr(last_candle_time, "strftime") else str(last_candle_time)
+                    if hasattr(self.telegram, "notify_stale_data_warning") and self.telegram.is_configured:
+                        self.telegram.notify_stale_data_warning(
+                            symbol=lcfg.SYMBOL,
+                            lag_minutes=round(lag_seconds / 60.0, 1),
+                            last_candle_time_str=last_candle_str,
+                            max_allowed_minutes=round(max_stale_sec / 60.0, 1),
+                        )
                 return False
+            else:
+                # 3. Notifikasi Pemulihan saat feed kembali normal (Recovery)
+                if self._is_feed_stale:
+                    self._is_feed_stale = False
+                    self.logger.info(
+                        f"[✅ FEED RECOVERED] Feed candle M5 kembali fresh (Lag: {lag_seconds / 60.0:.1f}m). Melanjutkan trading normal."
+                    )
+                    if hasattr(self.telegram, "notify_stale_data_recovered") and self.telegram.is_configured:
+                        self.telegram.notify_stale_data_recovered(
+                            symbol=lcfg.SYMBOL,
+                            lag_minutes=round(lag_seconds / 60.0, 1),
+                        )
 
         curr_time_sec = time.time()
         if curr_time_sec - self.last_heartbeat_time >= 60.0:
