@@ -220,28 +220,11 @@ class MT5Connector:
         return df
 
     def _safe_order_send(self, request: dict, timeout_sec: Optional[float] = None) -> Any:
-        """Kirim order_send ke MT5 dengan timeout guard via ThreadPoolExecutor."""
-        if timeout_sec is None:
-            timeout_sec = getattr(lcfg, "ORDER_TIMEOUT_SEC", 10.0)
-
-        executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        """Kirim order_send ke MT5 secara aman pada thread utama yang terotentikasi."""
         try:
-            future = executor.submit(mt5.order_send, request)
-            res = future.result(timeout=timeout_sec)
-            executor.shutdown(wait=False)
-            return res
-        except concurrent.futures.TimeoutError:
-            print(f"[💥 IPC TIMEOUT] mt5.order_send() melampaui batas waktu {timeout_sec}s! Thread dilepaskan tanpa blokir (wait=False).")
-            if sys.version_info >= (3, 9):
-                executor.shutdown(wait=False, cancel_futures=True)
-            else:
-                executor.shutdown(wait=False)
-            return None
-        except Exception:
-            if sys.version_info >= (3, 9):
-                executor.shutdown(wait=False, cancel_futures=True)
-            else:
-                executor.shutdown(wait=False)
+            return mt5.order_send(request)
+        except Exception as e:
+            print(f"[💥 ORDER SEND EXCEPTION] {e}")
             return None
 
     def get_open_positions(self, magic: int = lcfg.MAGIC_NUMBER) -> List[Any]:
@@ -495,8 +478,15 @@ class MT5Connector:
 
         return OrderResult(True, result.retcode, result.order, 0.0, 0.0, "Pending order removed successfully")
 
-    def close_position(self, ticket: int, comment: str = "Close Bot") -> OrderResult:
-        """Tutup posisi aktif berdasarkan tiket."""
+    def close_position(self, ticket: Any, comment: str = "Close Bot") -> OrderResult:
+        """Tutup posisi aktif berdasarkan tiket (int atau TradePosition)."""
+        if hasattr(ticket, "ticket"):
+            ticket = int(ticket.ticket)
+        elif isinstance(ticket, dict) and "ticket" in ticket:
+            ticket = int(ticket["ticket"])
+        else:
+            ticket = int(ticket)
+
         if not self.is_connected and not self.connect():
             return OrderResult(False, -1, 0, 0.0, 0.0, "Not connected")
 

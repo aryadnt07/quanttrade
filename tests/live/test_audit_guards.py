@@ -98,17 +98,20 @@ class TestLiveAuditGuards(unittest.TestCase):
             self.assertEqual(connector.get_broker_server_utc_offset_seconds(), 7200)
 
     # ─────────────────────────────────────────────────────────────
-    # TEST 3: SAFE ORDER SEND WITH IPC TIMEOUT (P0-004)
+    # TEST 3: SAFE ORDER SEND ERROR HANDLING (P0-004)
     # ─────────────────────────────────────────────────────────────
-    def test_safe_order_send_timeout(self):
+    def test_safe_order_send_error_handling(self):
         connector = MT5Connector()
-        def slow_order_send(req):
-            time.sleep(1.0)
-            return MagicMock(retcode=10009)
+        # 1. Exception handling returns None
+        with patch("src.execution.mt5_connector.mt5.order_send", side_effect=RuntimeError("IPC Pipe Broken")):
+            res = connector._safe_order_send({"action": 1})
+            self.assertIsNone(res, "Harus mengembalikan None jika order_send mengalami exception.")
 
-        with patch("src.execution.mt5_connector.mt5.order_send", side_effect=slow_order_send):
-            res = connector._safe_order_send({"action": 1}, timeout_sec=0.1)
-            self.assertIsNone(res, "Harus mengembalikan None jika order_send timeout.")
+        # 2. Successful call returns result
+        mock_result = MagicMock(retcode=10009)
+        with patch("src.execution.mt5_connector.mt5.order_send", return_value=mock_result):
+            res = connector._safe_order_send({"action": 1})
+            self.assertEqual(res, mock_result)
 
     # ─────────────────────────────────────────────────────────────
     # TEST 4: IN-FLIGHT ORDER MUTEX LOCK (P0-001)
