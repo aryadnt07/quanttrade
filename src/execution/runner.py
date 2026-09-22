@@ -65,6 +65,12 @@ class _StrategyStateProxy(dict):
             return getattr(strat, self._attr_name)
         return super().get(key, False)
 
+    def get(self, key: str, default: Any = None):
+        strat = self._trader._strategy_map.get(key)
+        if strat and hasattr(strat, self._attr_name):
+            return getattr(strat, self._attr_name)
+        return super().get(key, default)
+
     def __setitem__(self, key: str, value: Any):
         super().__setitem__(key, value)
         strat = self._trader._strategy_map.get(key)
