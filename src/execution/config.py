@@ -105,8 +105,8 @@ MAX_SESSION_RETRIES     = 3                        # Maksimal percobaan order ji
 RETRY_COOLDOWN_SEC      = 3.0                      # Jeda waktu antar retry jika terjadi penolakan broker (detik)
 
 # Anti-Chasing Guard
-LONDON_MAX_CHASE_USD    = 1.50                     # Toleransi harga breakout London (~90th percentile)
-NY_MAX_CHASE_USD        = 2.80                     # Toleransi harga breakout New York (~90th percentile)
+LONDON_MAX_CHASE_USD    = 1.69                     # Toleransi harga breakout London (Exact 90th percentile)
+NY_MAX_CHASE_USD        = 2.84                     # Toleransi harga breakout New York (Exact 90th percentile)
 POLL_INTERVAL_FAST_SEC  = 0.1                      # Polling rate saat jendela breakout aktif (100ms)
 POLL_INTERVAL_IDLE_SEC  = 1.0                      # Polling rate saat di luar jendela breakout (1.0s)
 
