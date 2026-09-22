@@ -105,7 +105,7 @@ MAX_SESSION_RETRIES     = 3                        # Maksimal percobaan order ji
 RETRY_COOLDOWN_SEC      = 3.0                      # Jeda waktu antar retry jika terjadi penolakan broker (detik)
 
 # Anti-Chasing Guard
-MAX_CHASE_USD           = 0.80                     # Toleransi mengejar harga breakout ($0.80 / 8 pips)
+MAX_CHASE_USD           = 1.50                     # Toleransi mengejar harga breakout ($1.50)
 POLL_INTERVAL_FAST_SEC  = 0.1                      # Polling rate saat jendela breakout aktif (100ms)
 POLL_INTERVAL_IDLE_SEC  = 1.0                      # Polling rate saat di luar jendela breakout (1.0s)
 
@@ -193,4 +193,4 @@ MAX_STALE_FEED_SECONDS  = _get_env_float("MAX_STALE_FEED_SECONDS", 900.0)  # 15 
 ENABLE_ACTIVE_PROBING   = _get_env_bool("ENABLE_ACTIVE_PROBING", True)
 PROBE_TIMEOUT_SEC       = _get_env_float("PROBE_TIMEOUT_SEC", 15.0)       # Investigasi broker saat timeout
 PROBE_INTERVAL_SEC      = _get_env_float("PROBE_INTERVAL_SEC", 3.0)        # Polling cross-check status broker
-MAX_REFIRE_SLIPPAGE_USD = _get_env_float("MAX_REFIRE_SLIPPAGE_USD", 1.50) # Maksimal toleransi slippage saat re-fire
+MAX_REFIRE_SLIPPAGE_USD = _get_env_float("MAX_REFIRE_SLIPPAGE_USD", 2.00) # Maksimal toleransi slippage saat re-fire

@@ -318,10 +318,33 @@ def evaluate_london_entry(
         return None
 
     if breakout_res["status"] == "CHASE_BLOCKED":
+        direction = breakout_res.get("direction", Direction.BUY)
+        limit_entry = or_high if direction == Direction.BUY else or_low
+        sl = or_low if direction == Direction.BUY else or_high
+        tp_dist = or_range * target_rr
+        tp = limit_entry + tp_dist if direction == Direction.BUY else limit_entry - tp_dist
+        action = "BUY_LIMIT" if direction == Direction.BUY else "SELL_LIMIT"
+        
+        intent = OrderIntent(
+            strategy_id="LONDON",
+            action=action,
+            volume=lot,
+            entry_price=limit_entry,
+            stop_loss=sl,
+            take_profit=tp,
+            comment="London-Limit-FLG",
+            magic_number=888001,
+            metadata={
+                "or_high": or_high,
+                "or_low": or_low,
+                "or_range": or_range,
+                "risk_usd": risk_usd,
+            },
+        )
         return {
             "status": "CHASE_BLOCKED",
-            "message": f"Harga sudah melompat > ${max_chase:.2f} dari OR. Dibatalkan demi keamanan.",
-            "intent": None,
+            "message": f"Harga loncat > ${max_chase:.2f}. Beralih ke Limit Order di {limit_entry:.2f}.",
+            "intent": intent,
         }
 
     if breakout_res["status"] == "SPREAD_BLOCKED":

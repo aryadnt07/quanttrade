@@ -379,8 +379,17 @@ class MT5Connector:
         sym_info = self.get_symbol_info(symbol)
         digits = sym_info.digits if sym_info else 2
 
-        is_buy_stop = (direction.upper() == "BUY_STOP")
-        order_type = mt5.ORDER_TYPE_BUY_STOP if is_buy_stop else mt5.ORDER_TYPE_SELL_STOP
+        action = direction.upper()
+        if action == "BUY_STOP":
+            order_type = mt5.ORDER_TYPE_BUY_STOP
+        elif action == "SELL_STOP":
+            order_type = mt5.ORDER_TYPE_SELL_STOP
+        elif action == "BUY_LIMIT":
+            order_type = mt5.ORDER_TYPE_BUY_LIMIT
+        elif action == "SELL_LIMIT":
+            order_type = mt5.ORDER_TYPE_SELL_LIMIT
+        else:
+            return OrderResult(False, -1, 0, 0.0, 0.0, f"Unsupported pending order type: {action}")
         order_price = float(round(price, digits))
 
         request = {
@@ -400,11 +409,12 @@ class MT5Connector:
             request["sl"] = float(round(sl, digits))
 
         if tp is not None and tp > 0:
-            if is_buy_stop and tp <= order_price:
-                print(f"[⚠️ INVERTED TP BLOCKED] BUY_STOP TP ({tp:.2f}) <= Order Price ({order_price:.2f}). Hard TP dibatalkan.")
+            is_buy_pending = action in ("BUY_STOP", "BUY_LIMIT")
+            if is_buy_pending and tp <= order_price:
+                print(f"[⚠️ INVERTED TP BLOCKED] {action} TP ({tp:.2f}) <= Order Price ({order_price:.2f}). Hard TP dibatalkan.")
                 tp = None
-            elif (not is_buy_stop) and tp >= order_price:
-                print(f"[⚠️ INVERTED TP BLOCKED] SELL_STOP TP ({tp:.2f}) >= Order Price ({order_price:.2f}). Hard TP dibatalkan.")
+            elif (not is_buy_pending) and tp >= order_price:
+                print(f"[⚠️ INVERTED TP BLOCKED] {action} TP ({tp:.2f}) >= Order Price ({order_price:.2f}). Hard TP dibatalkan.")
                 tp = None
 
         if tp is not None and tp > 0:
@@ -437,7 +447,7 @@ class MT5Connector:
                 comment=intent.comment,
                 magic=intent.magic_number,
             )
-        elif action in ("BUY_STOP", "SELL_STOP"):
+        elif action in ("BUY_STOP", "SELL_STOP", "BUY_LIMIT", "SELL_LIMIT"):
             return self.place_pending_order(
                 direction=action,
                 volume=intent.volume,

@@ -203,6 +203,8 @@ class NYLiveStrategy:
         if eval_result["status"] == "CHASE_BLOCKED":
             if self.logger:
                 self.logger.warning(f"[🛑 ANTI-CHASING NY] {eval_result['message']}")
+            if eval_result.get("intent"):
+                return eval_result["intent"]
             self.trades_today = True
             return None
 
@@ -290,22 +292,16 @@ class NYExecutorMixin:
             return
 
         dir_str = intent.action
-        tag = "LONG" if dir_str == "BUY" else "SHORT"
-        cmp_price = tick["ask"] if dir_str == "BUY" else tick["bid"]
-        comp_sym = ">" if dir_str == "BUY" else "<"
-        ref_level = strat.or_high if dir_str == "BUY" else strat.or_low
-        self.logger.info(f"\n[⚡ BREAKOUT NY {tag}] Price {cmp_price:.2f} {comp_sym} NY {ref_level:.2f} | Lot: {intent.volume} | SL: {intent.stop_loss:.2f} | TP: {intent.take_profit:.2f}")
+        tag = "LONG" if "BUY" in dir_str else "SHORT"
+        cmp_price = tick["ask"] if "BUY" in dir_str else tick["bid"]
+        comp_sym = ">" if "BUY" in dir_str else "<"
+        ref_level = strat.or_high if "BUY" in dir_str else strat.or_low
+        self.logger.info(f"\n[⚡ BREAKOUT NY {tag}] Price {cmp_price:.2f} {comp_sym} NY {ref_level:.2f} | Lot: {intent.volume} | SL: {intent.stop_loss:.2f} | TP: {intent.take_profit:.2f} | Action: {intent.action}")
 
         self._order_in_flight["NY"] = True
         strat.order_in_flight = True
         try:
-            res = self.connector.open_market_order(
-                direction=intent.action,
-                volume=intent.volume,
-                sl=intent.stop_loss,
-                tp=intent.take_profit,
-                comment=intent.comment,
-            )
+            res = self.connector.execute_order_intent(intent)
             self._handle_order_result("NY", res)
             strat.on_order_result(res, self.connector)
         finally:
