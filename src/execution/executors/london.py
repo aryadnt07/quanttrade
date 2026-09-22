@@ -192,7 +192,7 @@ class LondonLiveStrategy:
             min_lot=lcfg.MIN_LOT,
             max_lot=lcfg.MAX_LOT,
             max_spread=lcfg.MAX_SPREAD_USD,
-            max_chase=lcfg.MAX_CHASE_USD,
+            max_chase=lcfg.LONDON_MAX_CHASE_USD,
             target_rr=lcfg.LONDON_TARGET_RR,
             expansion_mult=lcfg.LONDON_EXPANSION,
         )

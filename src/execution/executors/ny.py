@@ -193,7 +193,7 @@ class NYLiveStrategy:
             min_lot=lcfg.MIN_LOT,
             max_lot=lcfg.MAX_LOT,
             max_spread=lcfg.MAX_SPREAD_USD,
-            max_chase=lcfg.MAX_CHASE_USD,
+            max_chase=lcfg.NY_MAX_CHASE_USD,
             target_rr=lcfg.NY_TARGET_RR,
             expansion_mult=lcfg.NY_EXPANSION,
         )
