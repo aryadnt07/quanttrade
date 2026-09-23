@@ -123,8 +123,9 @@ def plot_portfolio_dashboard(
 
     ax0.set_ylabel("Price (USD)", fontsize=10)
     ax0.legend(loc="upper left", facecolor="#1f2937", edgecolor="#374151", fontsize=8)
-    ax0.grid(True, linestyle="--", alpha=0.2)
-    ax0.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    is_short_span = len(df_raw) > 0 and (df_raw["datetime"].max() - df_raw["datetime"].min()).days <= 90
+    date_fmt = "%d %b %Y" if is_short_span else "%b %Y"
+    ax0.xaxis.set_major_formatter(mdates.DateFormatter(date_fmt))
 
     # ── Panel 2: Monthly PnL Attribution (Side-by-Side) ──
     ax1 = axes[1]
@@ -208,7 +209,9 @@ def plot_portfolio_dashboard(
         ax1.axhline(0, color="#6b7280", linewidth=0.8, linestyle="--")
         ax1.set_xticks(x)
         ax1.set_xticklabels(months, rotation=45, ha="right", fontsize=8)
-        ax1.set_ylim(min(-9500, min_v * 1.35), max_v * 1.42)
+        y_min_bound = min(-100.0, min_v * 1.35) if min_v < 0 else -50.0
+        y_max_bound = max(100.0, max_v * 1.42)
+        ax1.set_ylim(y_min_bound, y_max_bound)
         ax1.tick_params(axis="x", pad=6)
 
         ax1.text(
@@ -238,7 +241,7 @@ def plot_portfolio_dashboard(
     ax2.set_ylim(-max(6.0, stats.max_drawdown_pct * 1.4), 0.5)
     ax2.legend(loc="lower left", facecolor="#1f2937", edgecolor="#374151", fontsize=8)
     ax2.grid(True, linestyle="--", alpha=0.2)
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter(date_fmt))
 
     # ── Panel 4: Compounded Portfolio Equity Growth & Individual Strategies ──
     ax3 = axes[3]
@@ -259,22 +262,35 @@ def plot_portfolio_dashboard(
             ax3.plot(equity_dates, ny_equity, color=COLOR_NY, linewidth=1.2, linestyle="--",
                      alpha=0.85, label=f"NY ORB Component (+{stats.ny_pnl_usd:,.2f} USD)")
 
-        # Start account balance strictly from 10,000 (Initial Capital), not 0
-        y_max = max(equity_curve) * 1.05
-        ax3.set_ylim(bottom=stats.initial_capital, top=y_max)
+        # Start account balance with small buffer around initial capital and equity range
+        y_min = min(equity_curve)
+        y_max = max(equity_curve)
+        y_bottom = min(stats.initial_capital, y_min) * 0.995
+        y_top = max(stats.initial_capital, y_max) * 1.008
+        ax3.set_ylim(bottom=y_bottom, top=y_top)
 
-        y_range = y_max - stats.initial_capital
+        y_range = y_top - y_bottom
         if y_range > 2_000_000:
             step = 1_000_000
         elif y_range > 500_000:
             step = 250_000
         elif y_range > 150_000:
             step = 100_000
+        elif y_range > 20_000:
+            step = 10_000
+        elif y_range > 5_000:
+            step = 1_000
+        elif y_range > 1_000:
+            step = 250
+        elif y_range > 200:
+            step = 100
         else:
-            step = 25_000
+            step = 50
 
-        first_tick = int(np.ceil(stats.initial_capital / step) * step)
-        y_ticks = [stats.initial_capital] + [t for t in range(first_tick, int(y_max) + step, step) if t > stats.initial_capital]
+        first_tick = int(np.ceil(y_bottom / step) * step)
+        y_ticks = [t for t in range(first_tick, int(y_top) + step, step)]
+        if stats.initial_capital not in y_ticks and y_bottom <= stats.initial_capital <= y_top:
+            y_ticks = sorted(y_ticks + [stats.initial_capital])
         ax3.set_yticks(y_ticks)
         ax3.yaxis.set_major_formatter(plt.FuncFormatter(
             lambda x, p: f"${x/1_000_000:.1f}M" if x >= 1_000_000 else (f"${int(x/1000):,}k" if x >= 10000 else f"${int(x):,}")
@@ -297,7 +313,7 @@ def plot_portfolio_dashboard(
     ax3.set_xlabel("Date (UTC)", fontsize=9)
     ax3.legend(loc="upper left", facecolor="#1f2937", edgecolor="#374151", fontsize=8)
     ax3.grid(True, linestyle="--", alpha=0.2)
-    ax3.xaxis.set_major_formatter(mdates.DateFormatter("%b %Y"))
+    ax3.xaxis.set_major_formatter(mdates.DateFormatter(date_fmt))
 
     if save_path:
         os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)

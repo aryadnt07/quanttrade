@@ -240,19 +240,19 @@ def check_exit_conditions(
     if signal.direction.is_long and zscore <= -cfg.Z_HARD_CUT:
         return ExitReason.HARD_CUT_Z
 
-    # Hard Take Profit (Limit Order TP di server MT5)
-    if signal.take_profit is not None:
-        if signal.direction.is_long and high >= signal.take_profit:
-            return ExitReason.TAKE_PROFIT
-        if signal.direction.is_short and low <= signal.take_profit:
-            return ExitReason.TAKE_PROFIT
-
-    # Stop Loss (dengan simulasi Ask Spread untuk SHORT)
+    # Stop Loss (dengan simulasi Ask Spread untuk SHORT) - PESSIMISTIC ORDERING (SL before TP)
     spread = getattr(cfg, "SPREAD_USD", 0.30)
     if signal.direction.is_short and (high + spread) >= signal.stop_loss:
         return ExitReason.STOP_LOSS
     if signal.direction.is_long and low <= signal.stop_loss:
         return ExitReason.STOP_LOSS
+
+    # Hard Take Profit (Limit Order TP di server MT5)
+    if signal.take_profit is not None:
+        if signal.direction.is_long and high >= signal.take_profit:
+            return ExitReason.TAKE_PROFIT
+        if signal.direction.is_short and (low + spread) <= signal.take_profit:
+            return ExitReason.TAKE_PROFIT
 
     # Take Profit: Z-Score kembali ke area netral [-0.5, 0.5]
     if -cfg.Z_EXIT_THRESHOLD <= zscore <= cfg.Z_EXIT_THRESHOLD:

@@ -78,7 +78,10 @@ class NYTradeManager:
         h = row["high"]
         l = row["low"]
         c = row["close"]
-        self.duration_minutes += 5.0
+        if pd.notna(bar_dt) and pd.notna(sig.datetime):
+            self.duration_minutes = (bar_dt - sig.datetime).total_seconds() / 60.0
+        else:
+            self.duration_minutes += 1.0
 
         # Update MFE / MAE
         if sig.direction == Direction.BUY:

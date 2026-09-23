@@ -53,13 +53,18 @@ def compute_ny_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df["tr_sma20"] = df["tr"].rolling(cfg.EXPANSION_SMA_PERIOD).mean().shift(1)
     df["atr14"] = df["tr"].ewm(alpha=1.0 / 14, adjust=False).mean()
 
-    # 2. Extract Opening Range M15 (13:30 - 13:45 UTC) per date
+    # 2. Extract Opening Range M15 (09:30-09:45 ET / 13:30/14:30 UTC) per date
     df["date"] = df["datetime"].dt.date
     df["hour"] = df["datetime"].dt.hour
     df["minute"] = df["datetime"].dt.minute
 
-    # 13:30 <= time < 13:45
-    or_mask = (df["hour"] == 13) & (df["minute"] >= 30) & (df["minute"] < 45)
+    if getattr(cfg, "USE_DYNAMIC_DST", True):
+        # Wall Street Open is 09:30 - 09:45 in America/New_York local time year-round
+        ny_times = df["datetime"].dt.tz_convert("America/New_York")
+        or_mask = (ny_times.dt.hour == 9) & (ny_times.dt.minute >= 30) & (ny_times.dt.minute < 45)
+    else:
+        # Static UTC: 13:30 <= time < 13:45 UTC
+        or_mask = (df["hour"] == 13) & (df["minute"] >= 30) & (df["minute"] < 45)
     or_bars = df[or_mask]
 
     or_summary = or_bars.groupby("date").agg(

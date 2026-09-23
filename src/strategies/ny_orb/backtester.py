@@ -61,7 +61,14 @@ class NYBacktester:
 
     def __init__(self, df: pd.DataFrame, initial_capital: float = cfg.INITIAL_CAPITAL, df_m1: Optional[pd.DataFrame] = None):
         self.df_raw = df.copy()
-        self.df_m1 = df_m1.copy() if df_m1 is not None else None
+        if not isinstance(self.df_raw["datetime"].dtype, pd.DatetimeTZDtype):
+            self.df_raw["datetime"] = pd.to_datetime(self.df_raw["datetime"], utc=True)
+        if df_m1 is not None:
+            self.df_m1 = df_m1.copy()
+            if not isinstance(self.df_m1["datetime"].dtype, pd.DatetimeTZDtype):
+                self.df_m1["datetime"] = pd.to_datetime(self.df_m1["datetime"], utc=True)
+        else:
+            self.df_m1 = None
         self.initial_capital = initial_capital
         self.strategy = NYStrategy()
         self.trade_manager = NYTradeManager(current_capital=initial_capital)
@@ -114,7 +121,12 @@ class NYBacktester:
 
         for date, day_m1 in m1.groupby("date"):
             trade_count_today = 0
-            or_bars = day_m1[(day_m1["hour"] == 13) & (day_m1["minute"] >= 30) & (day_m1["minute"] < 45)]
+            if getattr(cfg, "USE_DYNAMIC_DST", True):
+                dt_ny = day_m1["datetime"].dt.tz_convert("America/New_York")
+                or_bars = day_m1[(dt_ny.dt.hour == 9) & (dt_ny.dt.minute >= 30) & (dt_ny.dt.minute < 45)]
+            else:
+                or_bars = day_m1[(day_m1["hour"] == 13) & (day_m1["minute"] >= 30) & (day_m1["minute"] < 45)]
+
             if len(or_bars) < cfg.MIN_ORB_BARS:
                 continue
 
@@ -124,9 +136,15 @@ class NYBacktester:
             if or_range <= 0:
                 continue
 
-            window = day_m1[((day_m1["hour"] == 13) & (day_m1["minute"] >= 45)) |
-                            ((day_m1["hour"] > 13) & (day_m1["hour"] < 16)) |
-                            ((day_m1["hour"] == 16) & (day_m1["minute"] < 30))].copy()
+            if getattr(cfg, "USE_DYNAMIC_DST", True):
+                dt_ny = day_m1["datetime"].dt.tz_convert("America/New_York")
+                window = day_m1[((dt_ny.dt.hour == 9) & (dt_ny.dt.minute >= 45)) |
+                                ((dt_ny.dt.hour > 9) & (dt_ny.dt.hour < 12)) |
+                                ((dt_ny.dt.hour == 12) & (dt_ny.dt.minute < 30))].copy()
+            else:
+                window = day_m1[((day_m1["hour"] == 13) & (day_m1["minute"] >= 45)) |
+                                ((day_m1["hour"] > 13) & (day_m1["hour"] < 16)) |
+                                ((day_m1["hour"] == 16) & (day_m1["minute"] < 30))].copy()
             if window.empty:
                 continue
 
@@ -222,7 +240,12 @@ class NYBacktester:
 
         for date, day_df in df.groupby("date"):
             trade_count_today = 0
-            or_df = day_df[(day_df["hour"] == 13) & (day_df["minute"] >= 30) & (day_df["minute"] < 45)]
+            if getattr(cfg, "USE_DYNAMIC_DST", True):
+                dt_ny = day_df["datetime"].dt.tz_convert("America/New_York")
+                or_df = day_df[(dt_ny.dt.hour == 9) & (dt_ny.dt.minute >= 30) & (dt_ny.dt.minute < 45)]
+            else:
+                or_df = day_df[(day_df["hour"] == 13) & (day_df["minute"] >= 30) & (day_df["minute"] < 45)]
+
             if len(or_df) < cfg.MIN_ORB_BARS:
                 continue
 
@@ -232,9 +255,15 @@ class NYBacktester:
             if or_range <= 0:
                 continue
 
-            window = day_df[((day_df["hour"] == 13) & (day_df["minute"] >= 45)) |
-                            ((day_df["hour"] > 13) & (day_df["hour"] < 16)) |
-                            ((day_df["hour"] == 16) & (day_df["minute"] < 30))].copy()
+            if getattr(cfg, "USE_DYNAMIC_DST", True):
+                dt_ny = day_df["datetime"].dt.tz_convert("America/New_York")
+                window = day_df[((dt_ny.dt.hour == 9) & (dt_ny.dt.minute >= 45)) |
+                                ((dt_ny.dt.hour > 9) & (dt_ny.dt.hour < 12)) |
+                                ((dt_ny.dt.hour == 12) & (dt_ny.dt.minute < 30))].copy()
+            else:
+                window = day_df[((day_df["hour"] == 13) & (day_df["minute"] >= 45)) |
+                                ((day_df["hour"] > 13) & (day_df["hour"] < 16)) |
+                                ((day_df["hour"] == 16) & (day_df["minute"] < 30))].copy()
 
             if window.empty:
                 continue

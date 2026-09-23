@@ -17,6 +17,7 @@ ENTRY_START_TIME       = "13:45"     # Mulai jendela eksekusi
 ENTRY_END_TIME         = "16:30"     # Batas akhir eksekusi & cutoff posisi (16:30 UTC)
 SESSION_HARD_CUTOFF    = "16:30"     # Tutup paksa posisi aktif jika belum TP/SL pada 16:30 UTC
 TIMEFRAME              = "M5"
+USE_DYNAMIC_DST        = True        # True = Dynamic DST via America/New_York (09:30 ET = 13:30 EDT / 14:30 EST)
 
 # ─────────────────────────────────────────────
 # 2. OPENING RANGE & EXPANSION FILTERS

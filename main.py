@@ -19,6 +19,7 @@ Subcommands:
 Usage:
     python main.py                          # Menjalankan Master Portfolio (default)
     python main.py portfolio [args...]
+    python main.py portfolio --tick         # Master Portfolio Level 3.0 Real Tick Replay (Ask/Bid Exact)
     python main.py asia [args...]
     python main.py london [args...]
     python main.py ny [args...]
@@ -59,6 +60,110 @@ def run_portfolio(args):
 
     data_m5_path = args.data or getattr(pcfg, "DEFAULT_DATA_M5", "data/xauusd-m5-bid-2021-09-08-2026-09-08.csv")
     data_m1_path = args.data_m1 or getattr(pcfg, "DEFAULT_DATA_M1", "data/xauusd-m1-bid-2021-09-08-2026-09-08.csv")
+
+    # ── TICK REPLAY MODE (LEVEL 3.0 FIDELITY) ──
+    if getattr(args, "tick", False):
+        from src.data.tick_loader import load_tick_csv
+        from src.strategies.portfolio.tick_engine import TickPortfolioEngine
+
+        tick_path = getattr(args, "data_tick", "data/xauusd-tick-2026-08-08-2026-09-08.csv")
+        initial_cap = getattr(args, "balance", pcfg.PORTFOLIO_INITIAL_CAPITAL)
+
+        print()
+        print("=" * 68)
+        print("   QUANTITATIVE MASTER PORTFOLIO — XAU/USD (TICK REPLAY LEVEL 3.0)")
+        print("   [Execution: Real Tick Replay (Ask/Bid Exact) | Dynamic Spreads & Slippage]")
+        print("=" * 68)
+        print()
+
+        # 1. Load Data
+        print(f"[1/4] Loading Tick dataset dari: {tick_path}...")
+        tick_dataset = load_tick_csv(tick_path)
+        print(f"      Loaded {len(tick_dataset):,} ticks ({len(tick_dataset.unique_dates)} hari aktif)")
+        print(f"      Rentang Tick: {tick_dataset.start_dt} — {tick_dataset.end_dt}")
+
+        print(f"      Loading companion M5 data untuk ORB box locking: {data_m5_path}...")
+        df_m5 = load_csv(data_m5_path)
+        print(f"      Loaded {len(df_m5):,} M5 bars")
+
+        # Konfigurasi Master Portofolio
+        print()
+        print("      --- KONFIGURASI MASTER PORTOFOLIO (TICK LEVEL 3.0) ---")
+        print(f"      Modal Awal          : ${initial_cap:,.2f} USD")
+        print(f"      Modul 1 (Asia MR)   : {pcfg.ASIAN_ENTRY_WINDOW} (Risk: {pcfg.ASIAN_RISK_PCT*100:.1f}%)")
+        if getattr(pcfg, "ENABLE_LONDON_ORB", False):
+            print(f"      Modul 2 (London ORB): {pcfg.LONDON_ENTRY_WINDOW} (Risk: {pcfg.LONDON_RISK_PCT*100:.1f}%)")
+        if pcfg.ENABLE_STRATEGY_2:
+            print(f"      Modul 3 (NY ORB)    : {pcfg.NY_ENTRY_WINDOW} (Risk: {pcfg.NY_RISK_PCT*100:.1f}%)")
+        print(f"      Spread Filter Max   : $0.60 (Strict Execution Guard)")
+        print(f"      Anti-Chase Slippage : London $1.69 / NY $2.84")
+        print(f"      Execution Fills     : BUY @ Ask, SELL @ Bid (Real Spread Cost)")
+        print()
+
+        # 2. Run Portfolio Engine
+        print("[2/4] Mengeksekusi modul kuantitatif pada 5+ Juta Tick...")
+        engine = TickPortfolioEngine(tick_dataset=tick_dataset, df_m5=df_m5, initial_capital=initial_cap)
+        stats = engine.run()
+
+        # 3. Compile & Export Report
+        print("[3/4] Mengompilasi performa portofolio & tabel atribusi...")
+        print(stats)
+        print_monthly_attribution_table(stats.monthly_pnl_df)
+        trade_log = engine.trade_log
+        print_portfolio_trade_log(trade_log)
+
+        export_trades = args.export_trades
+        if export_trades == "output/portfolio_trades.csv":
+            export_trades = "output/portfolio_trades_tick.csv"
+        if export_trades:
+            os.makedirs(os.path.dirname(os.path.abspath(export_trades)), exist_ok=True)
+            trade_log.to_csv(export_trades, index=False)
+            print(f"[✓] Master tick trade log disimpan ke: {export_trades}")
+
+        export_log = args.export_log
+        if export_log == "output/portfolio_log.txt":
+            export_log = "output/portfolio_log_tick.txt"
+        if export_log:
+            os.makedirs(os.path.dirname(os.path.abspath(export_log)), exist_ok=True)
+            with open(export_log, "w", encoding="utf-8") as f:
+                f.write(str(stats))
+                f.write("\n\n")
+                f.write("MONTHLY ATTRIBUTION:\n")
+                f.write(stats.monthly_pnl_df.to_string())
+            print(f"[✓] Laporan teks disimpan ke: {export_log}")
+
+        # 4. Chart Visualization
+        if not args.no_chart:
+            save_chart = args.save_chart
+            if save_chart == "output/portfolio_chart.png":
+                save_chart = "output/portfolio_chart_tick.png"
+            print(f"[4/4] Me-render visual dashboard portofolio tick ke {save_chart}...")
+            try:
+                start_ts = tick_dataset.start_dt
+                end_ts = tick_dataset.end_dt
+                df_m5_slice = df_m5[(df_m5["datetime"] >= start_ts) & (df_m5["datetime"] <= end_ts)].copy()
+                if len(df_m5_slice) < 50:
+                    df_m5_slice = df_m5.tail(1000).copy()
+
+                plot_portfolio_dashboard(
+                    df_raw=df_m5_slice,
+                    trades=engine.trades,
+                    stats=stats,
+                    equity_dates=engine.equity_dates,
+                    equity_curve=engine.equity_curve,
+                    asian_equity=engine.asian_equity,
+                    london_equity=engine.london_equity,
+                    ny_equity=engine.ny_equity,
+                    save_path=save_chart,
+                )
+                print(f"[✓] Visual dashboard tersimpan ke: {save_chart}")
+            except Exception as e:
+                print(f"[!] Gagal me-render visual dashboard: {e}")
+        else:
+            print("[4/4] Visualisasi dilewati (--no-chart)")
+
+        print("\n[✓] Simulasi Quantitative Master Portfolio Tick Replay Level 3.0 selesai sukses!\n")
+        return
 
     print()
     print("=" * 68)
@@ -313,6 +418,9 @@ def main():
     parser_portfolio.add_argument("--save-chart", type=str, default="output/portfolio_chart.png", help="Path output chart")
     parser_portfolio.add_argument("--export-trades", type=str, default="output/portfolio_trades.csv", help="Path output trade log")
     parser_portfolio.add_argument("--export-log", type=str, default="output/portfolio_log.txt", help="Path output text report")
+    parser_portfolio.add_argument("--tick", action="store_true", help="Aktifkan Level 3.0 Real Tick-by-Tick Replay Engine")
+    parser_portfolio.add_argument("--data-tick", type=str, default="data/xauusd-tick-2026-08-08-2026-09-08.csv", help="Path data Tick CSV")
+    parser_portfolio.add_argument("--balance", type=float, default=10000.0, help="Modal awal portofolio")
 
     # ── 2. ASIA ──
     parser_asia = subparsers.add_parser("asia", help="Jalankan Standalone Asian Mean Reversion")

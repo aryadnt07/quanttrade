@@ -67,6 +67,28 @@ class TestAsianSignals(unittest.TestCase):
         })
         self.assertEqual(check_exit_conditions(row_sl, sig), ExitReason.STOP_LOSS)
 
+    def test_check_exit_conditions_pessimistic_sl_precedence(self):
+        """Forensic test: when same candle breaches both TP and SL, SL must take precedence."""
+        sig = Signal(
+            bar_index=0,
+            datetime=pd.Timestamp("2026-09-21 02:00:00", tz="UTC"),
+            direction=Direction.LONG,
+            entry_price=2000.0,
+            stop_loss=1990.0,
+            take_profit=2010.0,
+        )
+
+        # High breaches TP (2015 >= 2010) AND Low breaches SL (1985 <= 1990)
+        row_both = pd.Series({
+            "datetime": pd.Timestamp("2026-09-21 02:05:00", tz="UTC"),
+            "high": 2015.0,
+            "low": 1985.0,
+            "close": 2005.0,
+            "zscore": 0.0,
+        })
+        # Must return STOP_LOSS, eliminating optimistic bias
+        self.assertEqual(check_exit_conditions(row_both, sig), ExitReason.STOP_LOSS)
+
 
 if __name__ == "__main__":
     unittest.main()
