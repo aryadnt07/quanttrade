@@ -414,6 +414,46 @@ class LivePortfolioTrader:
             comment="IPC Timeout: Verified not executed at broker after active probing",
         )
 
+    def _send_order_intent(self, intent: OrderIntent) -> OrderResult:
+        """Kirim OrderIntent ke broker adapter dengan routing yang tepat (Market vs Pending)."""
+        if hasattr(self.connector, "execute_order_intent"):
+            return self.connector.execute_order_intent(intent)
+
+        import inspect
+        action = intent.action.upper()
+        if action in ("BUY", "SELL"):
+            kwargs = {
+                "direction": action,
+                "volume": intent.volume,
+                "sl": intent.stop_loss,
+                "tp": intent.take_profit,
+                "comment": intent.comment,
+            }
+            if hasattr(self.connector, "open_market_order"):
+                sig = inspect.signature(self.connector.open_market_order)
+                if "magic" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    kwargs["magic"] = intent.magic_number
+            return self.connector.open_market_order(**kwargs)
+        else:
+            kwargs = {
+                "volume": intent.volume,
+                "price": intent.entry_price,
+                "sl": intent.stop_loss,
+                "tp": intent.take_profit,
+                "comment": intent.comment,
+            }
+            if hasattr(self.connector, "place_pending_order"):
+                sig = inspect.signature(self.connector.place_pending_order)
+                if "order_type" in sig.parameters:
+                    kwargs["order_type"] = action
+                else:
+                    kwargs["direction"] = action
+                if "magic" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                    kwargs["magic"] = intent.magic_number
+            else:
+                kwargs["direction"] = action
+            return self.connector.place_pending_order(**kwargs)
+
     def _dispatch_order_intent(self, strategy: ILiveStrategy, intent: OrderIntent):
         """Kirim OrderIntent ke broker adapter dengan proteksi in-flight mutex & Active Probing."""
         strategy.order_in_flight = True
@@ -428,13 +468,7 @@ class LivePortfolioTrader:
                 f"\n[🚀 SINYAL {strategy.name.upper()}] {intent.action} {intent.volume} Lot {lcfg.SYMBOL} "
                 f"| Entry: {intent.entry_price:.2f} | SL: {intent.stop_loss:.2f} | TP: {tp_log} | Tag: {intent.comment}"
             )
-            res = self.connector.open_market_order(
-                direction=intent.action,
-                volume=intent.volume,
-                sl=intent.stop_loss,
-                tp=intent.take_profit,
-                comment=intent.comment,
-            )
+            res = self._send_order_intent(intent)
 
             # Jika terjadi IPC Timeout (retcode == -10008 atau "Timeout" in res.comment)
             if not res.success and getattr(lcfg, "ENABLE_ACTIVE_PROBING", True) and (res.retcode == -10008 or "Timeout" in res.comment or "TIMEOUT" in res.comment.upper()):
@@ -447,7 +481,7 @@ class LivePortfolioTrader:
                     if strategy.retry_count < lcfg.MAX_SESSION_RETRIES:
                         tick = self.connector.get_tick(lcfg.SYMBOL) if hasattr(self.connector, "get_tick") else self.connector.get_current_tick(lcfg.SYMBOL)
                         if tick:
-                            curr_price = tick["ask"] if intent.action.upper() == "BUY" else tick["bid"]
+                            curr_price = tick["ask"] if "BUY" in intent.action.upper() else tick["bid"]
                             slippage = abs(curr_price - intent.entry_price)
                             max_allowed_slip = getattr(lcfg, "MAX_REFIRE_SLIPPAGE_USD", 1.50)
 
@@ -457,13 +491,7 @@ class LivePortfolioTrader:
                                     f"Menembak ulang order {strategy.name} setelah verifikasi bersih (Slippage: ${slippage:.2f} <= ${max_allowed_slip:.2f})..."
                                 )
                                 intent.entry_price = curr_price
-                                refire_res = self.connector.open_market_order(
-                                    direction=intent.action,
-                                    volume=intent.volume,
-                                    sl=intent.stop_loss,
-                                    tp=intent.take_profit,
-                                    comment=intent.comment,
-                                )
+                                refire_res = self._send_order_intent(intent)
                                 res = refire_res
                             else:
                                 self.logger.warning(

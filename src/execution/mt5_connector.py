@@ -284,11 +284,23 @@ class MT5Connector:
         tp: Optional[float] = None,
         comment: str = "FLG-Bot",
         symbol: str = lcfg.SYMBOL,
-        max_spread: Optional[float] = None
+        max_spread: Optional[float] = None,
+        magic: Optional[int] = None,
     ) -> OrderResult:
         """Kirim market order ke MT5 Exness."""
         if not self.is_connected and not self.connect():
             return OrderResult(False, -1, 0, 0.0, 0.0, "Not connected to MT5")
+
+        act = direction.upper()
+        if act not in ("BUY", "SELL"):
+            return OrderResult(
+                False,
+                10013,
+                0,
+                0.0,
+                0.0,
+                f"Invalid market order direction: '{direction}'. Market order must be 'BUY' or 'SELL'. For pending orders, use place_pending_order or execute_order_intent."
+            )
 
         tick = mt5.symbol_info_tick(symbol)
         if not tick:
@@ -302,7 +314,7 @@ class MT5Connector:
         sym_info = self.get_symbol_info(symbol)
         digits = sym_info.digits if sym_info else 2
 
-        is_buy = (direction.upper() == "BUY")
+        is_buy = (act == "BUY")
         order_type = mt5.ORDER_TYPE_BUY if is_buy else mt5.ORDER_TYPE_SELL
         raw_price = tick.ask if is_buy else tick.bid
         price = float(round(raw_price, digits))
@@ -315,7 +327,7 @@ class MT5Connector:
             "type": order_type,
             "price": price,
             "deviation": lcfg.SLIPPAGE_POINTS,
-            "magic": lcfg.MAGIC_NUMBER,
+            "magic": magic if magic is not None else lcfg.MAGIC_NUMBER,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
             "type_filling": filling,
@@ -370,7 +382,8 @@ class MT5Connector:
         sl: Optional[float] = None,
         tp: Optional[float] = None,
         comment: str = "FLG-Stop",
-        symbol: str = lcfg.SYMBOL
+        symbol: str = lcfg.SYMBOL,
+        magic: Optional[int] = None,
     ) -> OrderResult:
         """Kirim pending stop order langsung ke server MT5 broker."""
         if not self.is_connected and not self.connect():
@@ -391,6 +404,7 @@ class MT5Connector:
         else:
             return OrderResult(False, -1, 0, 0.0, 0.0, f"Unsupported pending order type: {action}")
         order_price = float(round(price, digits))
+        filling = self._get_filling_mode(symbol)
 
         request = {
             "action": mt5.TRADE_ACTION_PENDING,
@@ -399,10 +413,10 @@ class MT5Connector:
             "type": order_type,
             "price": order_price,
             "deviation": lcfg.SLIPPAGE_POINTS,
-            "magic": lcfg.MAGIC_NUMBER,
+            "magic": magic if magic is not None else lcfg.MAGIC_NUMBER,
             "comment": comment,
             "type_time": mt5.ORDER_TIME_GTC,
-            "type_filling": mt5.ORDER_FILLING_RETURN,
+            "type_filling": filling,
         }
 
         if sl is not None and sl > 0:

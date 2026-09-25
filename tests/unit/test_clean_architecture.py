@@ -609,6 +609,72 @@ class TestCleanArchitecture(unittest.TestCase):
         self.assertEqual(len(order_calls), 1)
         self.assertFalse(strategy.trades_today)
 
+    def test_dispatch_pending_limit_order_intent(self):
+        """P0 Anti-Chase: Memastikan BUY_LIMIT dialihkan ke place_pending_order dan BUKAN open_market_order."""
+        mock_broker = MockBroker()
+        pending_calls = []
+        market_calls = []
+
+        def mock_place_pending(order_type, volume, price, sl, tp=None, comment="", magic=None):
+            pending_calls.append({
+                "order_type": order_type,
+                "volume": volume,
+                "price": price,
+                "sl": sl,
+                "tp": tp,
+                "comment": comment,
+                "magic": magic,
+            })
+            return OrderResult(True, 10009, 7771, price, volume, "Pending limit placed")
+
+        def mock_open_market(**kwargs):
+            market_calls.append(kwargs)
+            return OrderResult(False, 10013, 0, 0.0, 0.0, "Should not be called for pending order")
+
+        mock_broker.place_pending_order = mock_place_pending
+        mock_broker.open_market_order = mock_open_market
+
+        strategy = LondonLiveStrategy()
+        trader = LivePortfolioTrader(connector=mock_broker, strategies=[strategy])
+
+        intent = OrderIntent(
+            strategy_id="LONDON",
+            action="BUY_LIMIT",
+            volume=0.03,
+            entry_price=4282.42,
+            stop_loss=4274.84,
+            take_profit=4297.58,
+            comment="London-Limit-FLG",
+            magic_number=888001,
+        )
+
+        trader._dispatch_order_intent(strategy, intent)
+
+        # Buktikan: market order TIDAK dipanggil, pending order DIPANGGIL dengan parameter akurat
+        self.assertEqual(len(market_calls), 0)
+        self.assertEqual(len(pending_calls), 1)
+        self.assertEqual(pending_calls[0]["order_type"], "BUY_LIMIT")
+        self.assertEqual(pending_calls[0]["price"], 4282.42)
+        self.assertEqual(pending_calls[0]["sl"], 4274.84)
+        self.assertEqual(pending_calls[0]["tp"], 4297.58)
+        self.assertTrue(strategy.trades_today)
+
+    def test_open_market_order_rejects_pending_types(self):
+        """Safety: open_market_order harus menolak BUY_LIMIT/SELL_LIMIT jika dipanggil langsung."""
+        from src.execution.mt5_connector import MT5Connector
+        connector = MT5Connector()
+        connector.is_connected = True
+
+        res = connector.open_market_order(
+            direction="BUY_LIMIT",
+            volume=0.03,
+            sl=4274.84,
+            tp=4297.58,
+        )
+        self.assertFalse(res.success)
+        self.assertEqual(res.retcode, 10013)
+        self.assertIn("Invalid market order direction", res.comment)
+
 
 if __name__ == "__main__":
     unittest.main()
